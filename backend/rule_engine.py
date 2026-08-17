@@ -427,3 +427,84 @@ class RuleChecker:
             "evidence": "DHCP pool operational.",
             "severity": "SEV-3"
         }
+
+    @staticmethod
+    def validate_proposed_command(
+        device: str,
+        command: str,
+        current_prompt: str,
+        verified_interfaces: List[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Validates whether a Cisco IOS command is safe to show to the user.
+        Checks:
+        1. CLI Mode matching (READ_ONLY vs CONFIGURATION).
+        2. Interface existence check.
+        3. Simple syntax validation.
+        """
+        cmd_clean = command.strip().lower()
+        prompt_clean = current_prompt.strip()
+
+        # Classify command
+        read_only_cmds = [
+            "show ip interface brief", "show ip route", "show running-config",
+            "show vlan brief", "show interfaces trunk", "show ip arp",
+            "show access-lists", "show ip nat translations", "show mac address-table"
+        ]
+        
+        is_read_only = any(cmd_clean.startswith(r) for r in read_only_cmds)
+        
+        # Verify CLI prompt mode vs required mode
+        if is_read_only:
+            if "(config" in prompt_clean:
+                return {
+                    "valid": False,
+                    "reason": "Wrong CLI mode. Read-only verification commands cannot be run inside configuration modes.",
+                    "suggested_command": "end",
+                    "expected_prompt": prompt_clean.split("(")[0] + "#"
+                }
+            if prompt_clean.endswith(">"):
+                return {
+                    "valid": False,
+                    "reason": "Wrong CLI mode. Please enter Privileged Exec mode first.",
+                    "suggested_command": "enable",
+                    "expected_prompt": prompt_clean.replace(">", "#")
+                }
+
+        # Check interface configuration command validation
+        if cmd_clean.startswith("interface "):
+            parts = command.strip().split()
+            if len(parts) >= 2:
+                if_name = parts[1]
+                if verified_interfaces is not None and len(verified_interfaces) > 0:
+                    matched = any(if_name.lower() in v.lower() or v.lower() in if_name.lower() for v in verified_interfaces)
+                    if not matched:
+                        return {
+                            "valid": False,
+                            "reason": f"Interface {if_name} does not exist on this device. Confirmed interfaces: {', '.join(verified_interfaces)}.",
+                            "suggested_command": "show ip interface brief",
+                            "expected_prompt": prompt_clean.split("(")[0] + "#"
+                        }
+            
+            if "(config" not in prompt_clean:
+                return {
+                    "valid": False,
+                    "reason": "Wrong CLI mode. You must enter configuration mode before selecting an interface.",
+                    "suggested_command": "configure terminal",
+                    "expected_prompt": prompt_clean.split("#")[0] + "(config)#"
+                }
+
+        # Check configuration commands that require interface mode (no shutdown, ip address, etc.)
+        config_if_cmds = ["no shutdown", "shutdown", "ip address ", "switchport "]
+        is_config_if = any(cmd_clean.startswith(c) for c in config_if_cmds)
+        if is_config_if:
+            if not prompt_clean.endswith("(config-if)#"):
+                return {
+                    "valid": False,
+                    "reason": "Wrong CLI mode. This configuration command can only be executed in interface configuration mode.",
+                    "suggested_command": "interface GigabitEthernet0/0",
+                    "expected_prompt": prompt_clean.split("(")[0] + "(config-if)#"
+                }
+
+        return {"valid": True}
+
