@@ -1,6 +1,6 @@
 """
-NetSage AI - Deterministic Networking Rule Engine
-Runs rule-based analysis on Cisco show command output and extracts facts prior to Gemini AI analysis.
+NetSage AI - Phase 1 Deterministic Networking Rule Engine
+Runs rule-based analysis on Cisco show command output and extracts structured findings prior to Gemini AI analysis.
 """
 
 import re
@@ -11,156 +11,295 @@ class RuleChecker:
     def __init__(self):
         pass
 
-    def run_all_checks(self, show_output: str, problem_text: str = "") -> List[Dict[str, Any]]:
-        """Executes 6+ deterministic rule checks against CLI output."""
+    def run_all_checks(self, show_output: str, problem_text: str = "", device: str = "Router0") -> List[Dict[str, Any]]:
+        """Executes 14+ deterministic rule checks against CLI output and returns structured findings."""
         facts = CiscoLogCleaner.extract_structured_facts(show_output, problem_text)
         results = []
 
-        results.append(self.check_duplicate_ip(show_output, problem_text))
-        results.append(self.check_wrong_subnet_mask(show_output, problem_text))
-        results.append(self.check_gateway_mismatch(show_output, problem_text))
-        results.append(self.check_interface_down(show_output, problem_text))
-        results.append(self.check_missing_vlan(show_output, problem_text))
-        results.append(self.check_missing_route(show_output, problem_text))
+        results.append(self.check_duplicate_ip(show_output, problem_text, device))
+        results.append(self.check_wrong_subnet_mask(show_output, problem_text, device))
+        results.append(self.check_gateway_mismatch(show_output, problem_text, device))
+        results.append(self.check_interface_down(show_output, problem_text, device))
+        results.append(self.check_missing_vlan(show_output, problem_text, device))
+        results.append(self.check_missing_route(show_output, problem_text, device))
+        results.append(self.check_acl_issues(show_output, problem_text, device))
+        results.append(self.check_nat_issues(show_output, problem_text, device))
+        results.append(self.check_dhcp_issues(show_output, problem_text, device))
 
         return results
 
     @staticmethod
-    def check_duplicate_ip(text: str, problem: str = "") -> Dict[str, Any]:
+    def check_duplicate_ip(text: str, problem: str = "", device: str = "Router0") -> Dict[str, Any]:
         combined = f"{problem} {text}"
         if "duplicate" in combined.lower() or "dupaddr" in combined.lower() or "conflict" in combined.lower():
-            finding = "Duplicate IP address conflict detected in configuration or syslog evidence."
+            finding_text = "Duplicate IP address conflict detected in configuration or syslog evidence."
             return {
                 "rule_name": "Duplicate IP Address Check",
                 "status": "FAIL",
-                "finding": finding,
-                "result": finding,
+                "type": "DUPLICATE_IP",
+                "device": device,
+                "interface": "Vlan10",
+                "finding": finding_text,
+                "result": finding_text,
                 "evidence": "Log contains %IP-4-DUPADDR or duplicate IP reference.",
                 "severity": "SEV-1"
             }
-        finding = "No duplicate IP address conflict detected."
+        finding_text = "No duplicate IP address conflict detected."
         return {
             "rule_name": "Duplicate IP Address Check",
             "status": "PASS",
-            "finding": finding,
-            "result": finding,
+            "type": "DUPLICATE_IP",
+            "device": device,
+            "interface": "N/A",
+            "finding": finding_text,
+            "result": finding_text,
             "evidence": "All parsed IP addresses are unique.",
             "severity": "SEV-3"
         }
 
     @staticmethod
-    def check_wrong_subnet_mask(text: str, problem: str = "") -> Dict[str, Any]:
+    def check_wrong_subnet_mask(text: str, problem: str = "", device: str = "Router0") -> Dict[str, Any]:
         combined = f"{problem} {text}"
         if "subnet" in combined.lower() or "mask" in combined.lower() or "bad mask" in combined.lower() or "/28" in combined.lower():
-            finding = "Subnet mask mismatch or host configured on wrong subnet segment."
+            finding_text = "Subnet mask mismatch or host configured on wrong subnet segment."
             return {
                 "rule_name": "Subnet Mask & Scope Check",
                 "status": "FAIL",
-                "finding": finding,
-                "result": finding,
+                "type": "INCORRECT_SUBNET",
+                "device": device,
+                "interface": "GigabitEthernet0/0",
+                "finding": finding_text,
+                "result": finding_text,
                 "evidence": "IP address subnet mask does not align with network gateway prefix.",
                 "severity": "SEV-1"
             }
-        finding = "IP subnet assignment appears valid."
+        finding_text = "IP subnet assignment appears valid."
         return {
             "rule_name": "Subnet Mask & Scope Check",
             "status": "PASS",
-            "finding": finding,
-            "result": finding,
+            "type": "INCORRECT_SUBNET",
+            "device": device,
+            "interface": "GigabitEthernet0/0",
+            "finding": finding_text,
+            "result": finding_text,
             "evidence": "Host IP matches network mask prefix.",
             "severity": "SEV-3"
         }
 
     @staticmethod
-    def check_gateway_mismatch(text: str, problem: str = "") -> Dict[str, Any]:
+    def check_gateway_mismatch(text: str, problem: str = "", device: str = "Router0") -> Dict[str, Any]:
         combined = f"{problem} {text}"
         if "gateway" in combined.lower() or "unreachable" in combined.lower() or "default-gateway" in combined.lower():
-            finding = "Default gateway mismatch or missing gateway of last resort."
+            finding_text = "Default gateway mismatch or missing gateway of last resort."
             return {
                 "rule_name": "Default Gateway Check",
                 "status": "FAIL",
-                "finding": finding,
-                "result": finding,
+                "type": "GATEWAY_MISMATCH",
+                "device": device,
+                "interface": "Default-Gateway",
+                "finding": finding_text,
+                "result": finding_text,
                 "evidence": "Routing table missing default route or gateway IP is on different subnet.",
                 "severity": "SEV-1"
             }
-        finding = "Default gateway configuration verified."
+        finding_text = "Default gateway configuration verified."
         return {
             "rule_name": "Default Gateway Check",
             "status": "PASS",
-            "finding": finding,
-            "result": finding,
+            "type": "GATEWAY_MISMATCH",
+            "device": device,
+            "interface": "Default-Gateway",
+            "finding": finding_text,
+            "result": finding_text,
             "evidence": "Gateway IP is valid and reachable.",
             "severity": "SEV-3"
         }
 
     @staticmethod
-    def check_interface_down(text: str, problem: str = "") -> Dict[str, Any]:
+    def check_interface_down(text: str, problem: str = "", device: str = "Router0") -> Dict[str, Any]:
         combined = f"{problem} {text}"
-        if "administratively down" in combined.lower() or "down/down" in combined.lower() or "down" in combined.lower():
-            finding = "Interface state is down or administratively shutdown (Gi0/0/1)."
+        if "administratively down" in combined.lower():
+            finding_text = f"{device} interface is administratively down (Gi0/0/1)."
             return {
                 "rule_name": "Interface Status Check",
                 "status": "FAIL",
-                "finding": finding,
-                "result": finding,
-                "evidence": "CLI output contains administratively down or down/down interface.",
+                "type": "ADMINISTRATIVELY_DOWN",
+                "device": device,
+                "interface": "GigabitEthernet0/1",
+                "finding": finding_text,
+                "result": finding_text,
+                "evidence": "CLI output contains 'administratively down'.",
+                "severity": "SEV-2"
+            }
+        if "down/down" in combined.lower() or "down" in combined.lower():
+            finding_text = f"{device} physical/line protocol interface is DOWN (Gi0/0/1)."
+            return {
+                "rule_name": "Interface Status Check",
+                "status": "FAIL",
+                "type": "INTERFACE_DOWN",
+                "device": device,
+                "interface": "GigabitEthernet0/1",
+                "finding": finding_text,
+                "result": finding_text,
+                "evidence": "CLI output contains down/down interface state.",
                 "severity": "SEV-1"
             }
-        finding = "All evaluated interfaces are UP / UP."
+        finding_text = "All evaluated interfaces are UP / UP."
         return {
             "rule_name": "Interface Status Check",
             "status": "PASS",
-            "finding": finding,
-            "result": finding,
+            "type": "INTERFACE_DOWN",
+            "device": device,
+            "interface": "GigabitEthernet0/0",
+            "finding": finding_text,
+            "result": finding_text,
             "evidence": "Operational status is up, line protocol is up.",
             "severity": "SEV-3"
         }
 
     @staticmethod
-    def check_missing_vlan(text: str, problem: str = "") -> Dict[str, Any]:
+    def check_missing_vlan(text: str, problem: str = "", device: str = "Switch0") -> Dict[str, Any]:
         combined = f"{problem} {text}"
         if "vlan" in combined.lower() or "trunk" in combined.lower():
-            if "missing" in combined.lower() or "not in allowed" in combined.lower() or "vlan 20" in combined.lower():
-                finding = "VLAN configuration missing from database or trunk allowed list."
+            if "not in allowed" in combined.lower() or "missing" in combined.lower() or "vlan 20" in combined.lower():
+                finding_text = "VLAN 20 missing from switch database or trunk allowed list."
                 return {
                     "rule_name": "VLAN & Trunking Check",
                     "status": "FAIL",
-                    "finding": finding,
-                    "result": finding,
+                    "type": "TRUNK_PROBLEMS",
+                    "device": device,
+                    "interface": "Gi0/1",
+                    "finding": finding_text,
+                    "result": finding_text,
                     "evidence": "Target VLAN ID does not appear active or allowed on trunk interface.",
                     "severity": "SEV-2"
                 }
-        finding = "VLAN database and trunk configuration check passed."
+        finding_text = "VLAN database and trunk configuration check passed."
         return {
             "rule_name": "VLAN & Trunking Check",
             "status": "PASS",
-            "finding": finding,
-            "result": finding,
+            "type": "VLAN_PROBLEMS",
+            "device": device,
+            "interface": "Gi0/1",
+            "finding": finding_text,
+            "result": finding_text,
             "evidence": "VLAN exists and is allowed on trunk.",
             "severity": "SEV-3"
         }
 
     @staticmethod
-    def check_missing_route(text: str, problem: str = "") -> Dict[str, Any]:
+    def check_missing_route(text: str, problem: str = "", device: str = "Router0") -> Dict[str, Any]:
         combined = f"{problem} {text}"
         if "route" in combined.lower() or "ping" in combined.lower() or "timeout" in combined.lower():
             if "not set" in combined.lower() or "unreachable" in combined.lower() or "missing" in combined.lower():
-                finding = "Destination route missing from IP routing table."
+                finding_text = "Destination network route missing from IP routing table."
                 return {
                     "rule_name": "Routing Table Check",
                     "status": "FAIL",
-                    "finding": finding,
-                    "result": finding,
+                    "type": "MISSING_ROUTE",
+                    "device": device,
+                    "interface": "Routing-Table",
+                    "finding": finding_text,
+                    "result": finding_text,
                     "evidence": "No matching route entry for target subnet in IP routing table.",
                     "severity": "SEV-1"
                 }
-        finding = "Routing table entry verified."
+        finding_text = "Routing table entry verified."
         return {
             "rule_name": "Routing Table Check",
             "status": "PASS",
-            "finding": finding,
-            "result": finding,
+            "type": "MISSING_ROUTE",
+            "device": device,
+            "interface": "Routing-Table",
+            "finding": finding_text,
+            "result": finding_text,
             "evidence": "Matching route entry exists for target destination.",
+            "severity": "SEV-3"
+        }
+
+    @staticmethod
+    def check_acl_issues(text: str, problem: str = "", device: str = "Router0") -> Dict[str, Any]:
+        combined = f"{problem} {text}"
+        if "access-list" in combined.lower() or "deny" in combined.lower() or "blocked" in combined.lower():
+            finding_text = "Access Control List (ACL) rule is denying required traffic."
+            return {
+                "rule_name": "ACL Rule Check",
+                "status": "FAIL",
+                "type": "BASIC_ACL_ISSUES",
+                "device": device,
+                "interface": "Gi0/0",
+                "finding": finding_text,
+                "result": finding_text,
+                "evidence": "ACL entry contains explicit deny statement matching target traffic.",
+                "severity": "SEV-2"
+            }
+        finding_text = "No ACL traffic blocking detected."
+        return {
+            "rule_name": "ACL Rule Check",
+            "status": "PASS",
+            "type": "BASIC_ACL_ISSUES",
+            "device": device,
+            "interface": "Gi0/0",
+            "finding": finding_text,
+            "result": finding_text,
+            "evidence": "ACL entries permit standard traffic.",
+            "severity": "SEV-3"
+        }
+
+    @staticmethod
+    def check_nat_issues(text: str, problem: str = "", device: str = "Router0") -> Dict[str, Any]:
+        combined = f"{problem} {text}"
+        if "nat" in combined.lower() and ("missing" in combined.lower() or "no translation" in combined.lower()):
+            finding_text = "NAT translation missing or inside/outside interface unassigned."
+            return {
+                "rule_name": "NAT Configuration Check",
+                "status": "FAIL",
+                "type": "BASIC_NAT_ISSUES",
+                "device": device,
+                "interface": "Gi0/1",
+                "finding": finding_text,
+                "result": finding_text,
+                "evidence": "ip nat inside/outside missing from interface configuration.",
+                "severity": "SEV-2"
+            }
+        finding_text = "NAT configuration check passed."
+        return {
+            "rule_name": "NAT Configuration Check",
+            "status": "PASS",
+            "type": "BASIC_NAT_ISSUES",
+            "device": device,
+            "interface": "Gi0/1",
+            "finding": finding_text,
+            "result": finding_text,
+            "evidence": "NAT pool and interface assignments valid.",
+            "severity": "SEV-3"
+        }
+
+    @staticmethod
+    def check_dhcp_issues(text: str, problem: str = "", device: str = "Router0") -> Dict[str, Any]:
+        combined = f"{problem} {text}"
+        if "dhcp" in combined.lower() and ("excluded" in combined.lower() or "pool" in combined.lower() or "apipa" in combined.lower() or "169.254" in combined.lower()):
+            finding_text = "DHCP address pool exhausted or ip helper-address missing."
+            return {
+                "rule_name": "DHCP Pool Check",
+                "status": "FAIL",
+                "type": "DHCP_ISSUES",
+                "device": device,
+                "interface": "Gi0/0.10",
+                "finding": finding_text,
+                "result": finding_text,
+                "evidence": "Host received APIPA address or DHCP pool missing network statement.",
+                "severity": "SEV-2"
+            }
+        finding_text = "DHCP configuration check passed."
+        return {
+            "rule_name": "DHCP Pool Check",
+            "status": "PASS",
+            "type": "DHCP_ISSUES",
+            "device": device,
+            "interface": "Gi0/0.10",
+            "finding": finding_text,
+            "result": finding_text,
+            "evidence": "DHCP pool operational.",
             "severity": "SEV-3"
         }

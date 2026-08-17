@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import httpx
 from typing import Dict, Any, List
 from dotenv import load_dotenv
@@ -7,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 
 class GeminiService:
     @classmethod
@@ -18,62 +19,71 @@ class GeminiService:
         cleaned_facts: Dict[str, Any],
         rule_results: List[Dict[str, Any]],
         retrieved_cases: List[Dict[str, Any]],
-        previous_iterations: List[Dict[str, Any]] = None
+        previous_iterations: List[Dict[str, Any]] = None,
+        device: str = "Router0",
+        command: str = "show ip interface brief"
     ) -> Dict[str, Any]:
         """
-        Sends the complete iterative session context to Google Gemini AI and returns structured beginner guidance.
+        Phase 1 Gemini AI Integration Service.
+        Generates structured beginner guidance and diagnosis conforming strictly to Phase 1 JSON schema.
         """
         previous_iterations = previous_iterations or []
 
         prompt = f"""
 You are NetSage AI, an expert Cisco Networking & CCNA/CCNP Troubleshooting Assistant.
-You guide beginner networking students step-by-step to troubleshoot Packet Tracer lab problems.
+You guide beginner networking students step-by-step to troubleshoot Cisco Packet Tracer lab problems based strictly on submitted CLI evidence.
 
-=== CURRENT TROUBLESHOOTING SESSION CONTEXT ===
-Original Problem Description:
+=== PHASE 1 TROUBLESHOOTING CONTEXT ===
+Target Device: {device}
+Executed Command: {command}
+User Problem Description:
 {problem_text}
 
 Latest Submitted Cisco CLI Output:
 {current_logs if current_logs.strip() else "[No CLI output submitted yet]"}
 
-Python Cleaned Facts Extracted:
+Python Cleaned Facts:
 {json.dumps(cleaned_facts, indent=2)}
 
-Python Deterministic Rule Engine Results:
+Python Rule Engine Findings (Deterministic Checks):
 {json.dumps(rule_results, indent=2)}
 
 Relevant Knowledge Base Cases (from 255+ Dataset):
 {json.dumps(retrieved_cases, indent=2)}
 
-Previous Session History (Past Iterations & User Actions):
+Previous Session History:
 {json.dumps(previous_iterations, indent=2)}
 
-=== GUIDANCE INSTRUCTIONS ===
-Analyze the combined evidence above.
-You MUST output ONLY a single valid JSON object with NO additional Markdown formatting or raw text outside JSON.
-Use this EXACT JSON structure:
+=== RESPONSE RULES ===
+1. Analyze the evidence above.
+2. If evidence is incomplete or insufficient, DO NOT guess or hallucinate. Set "status": "NEED_MORE_DATA" and specify "next_evidence_required" (e.g. "show ip route").
+3. You MUST output ONLY a single valid JSON object with NO markdown or outside text.
 
+JSON Schema:
 {{
-  "status": "NEED_MORE_DATA | LIKELY_CAUSE_FOUND | FIX_RECOMMENDED | READY_FOR_VERIFICATION | RESOLVED",
+  "status": "FIX_RECOMMENDED | NEED_MORE_DATA | READY_FOR_VERIFICATION | RESOLVED | UNRESOLVED",
   "root_cause": "Clear root cause statement or null if NEED_MORE_DATA",
   "osi_layer": "Layer 1 | Layer 2 | Layer 3 | Layer 4 | Layer 7",
   "confidence": "High | Medium | Low",
   "evidence": [
-    "Specific evidence point 1 from CLI output or Python rule results",
-    "Specific evidence point 2"
+    "Specific evidence point 1 from CLI output or Python rule results"
   ],
-  "what_i_found": "Beginner-friendly, step-by-step breakdown of what was discovered.",
-  "next_command": "Recommended Cisco CLI show command to run next (e.g., 'show interfaces trunk')",
-  "why_this_command": "Explanation of why this specific command is required.",
-  "expected_output": "What the student should look for in the CLI output.",
-  "fix_steps": [
-    "Exact Cisco IOS configuration command to execute in Packet Tracer (e.g. 'interface Gi0/0/0.20')",
-    "Next configuration command (e.g. 'encapsulation dot1Q 20')"
+  "explanation": "Beginner-friendly explanation of why this fault causes the network problem.",
+  "recommended_fix": "Exact instructions to fix in Cisco Packet Tracer.",
+  "commands": [
+    "Exact Cisco IOS CLI command line 1 (e.g. 'interface GigabitEthernet0/1')",
+    "Exact Cisco IOS CLI command line 2 (e.g. 'no shutdown')"
   ],
-  "test_steps": [
-    "Verification test step in Packet Tracer (e.g. 'ping 192.168.20.1 from PC1')"
+  "expected_output": "What the user should look for after running verification command.",
+  "verification_steps": [
+    "Step 1: Apply fix in Packet Tracer.",
+    "Step 2: Run verification command (e.g. 'show ip interface brief').",
+    "Step 3: Copy and paste new CLI output into NetSage AI."
   ],
-  "what_to_submit_next": "Explicit instruction on what command output to copy & paste into NetSage next."
+  "next_evidence_required": "Exact Cisco show command required next (e.g. 'show ip interface brief')",
+  "alternative_causes": [
+    "Possible secondary cause if primary fix does not resolve issue"
+  ]
 }}
 """
 
@@ -102,13 +112,13 @@ Use this EXACT JSON structure:
                         cleaned_json = re.sub(r"```$", "", cleaned_json).strip()
                     return json.loads(cleaned_json)
                 else:
-                    return cls._fallback_guidance(problem_text, current_logs, rule_results, f"Gemini API returned status {response.status_code}")
+                    return cls._fallback_guidance(problem_text, current_logs, rule_results, f"Gemini API returned status {response.status_code}", device, command)
         except Exception as e:
-            return cls._fallback_guidance(problem_text, current_logs, rule_results, str(e))
+            return cls._fallback_guidance(problem_text, current_logs, rule_results, str(e), device, command)
 
     @classmethod
-    def _fallback_guidance(cls, problem: str, logs: str, rules: List[Dict[str, Any]], err_msg: str) -> Dict[str, Any]:
-        """Deterministic fallback guidance if Gemini API is unreachable or rate limited."""
+    def _fallback_guidance(cls, problem: str, logs: str, rules: List[Dict[str, Any]], err_msg: str, device: str = "Router0", command: str = "show ip interface brief") -> Dict[str, Any]:
+        """Deterministic fallback guidance conforming to Phase 1 JSON schema."""
         failed_rules = [r for r in rules if r.get("status") == "FAIL"]
         
         if failed_rules:
@@ -118,14 +128,18 @@ Use this EXACT JSON structure:
                 "root_cause": first_fail["finding"],
                 "osi_layer": "Layer 3" if "IP" in first_fail["rule_name"] else "Layer 2",
                 "confidence": "High",
-                "evidence": [first_fail["evidence"], f"Deterministic Rule: {first_fail['rule_name']}"],
-                "what_i_found": f"Python rule checker detected a deterministic issue: {first_fail['finding']}",
-                "next_command": "show ip interface brief",
-                "why_this_command": "To verify interface state and IP address assignment.",
-                "expected_output": "Status UP / UP and correct IP address assigned.",
-                "fix_steps": ["Verify physical cable connections and sub-interface configuration in Packet Tracer."],
-                "test_steps": ["Run ping test to default gateway."],
-                "what_to_submit_next": "Run 'show ip interface brief' in Packet Tracer and paste the new output here."
+                "evidence": [first_fail["evidence"], f"Python Check: {first_fail['rule_name']} ({first_fail['severity']})"],
+                "explanation": f"Python rule checker detected a deterministic configuration issue on {device}: {first_fail['finding']}",
+                "recommended_fix": f"Configure {device} in Packet Tracer to correct the {first_fail['rule_name']}.",
+                "commands": ["interface GigabitEthernet0/1", "no shutdown"],
+                "expected_output": "Interface status should change to UP / UP.",
+                "verification_steps": [
+                  "1. Enter global configuration mode in Packet Tracer.",
+                  "2. Execute the fix commands.",
+                  "3. Run 'show ip interface brief' and paste new output into NetSage AI."
+                ],
+                "next_evidence_required": "show ip interface brief",
+                "alternative_causes": ["Cable disconnected in Packet Tracer workspace."]
             }
         
         return {
@@ -133,12 +147,12 @@ Use this EXACT JSON structure:
             "root_cause": None,
             "osi_layer": "Layer 3",
             "confidence": "Low",
-            "evidence": ["Initial evidence insufficient to diagnose root cause."],
-            "what_i_found": "Additional CLI command evidence is required to identify the root cause.",
-            "next_command": "show ip route",
-            "why_this_command": "Required to inspect the routing table for target network routes.",
-            "expected_output": "A valid route entry for the destination network.",
-            "fix_steps": [],
-            "test_steps": [],
-            "what_to_submit_next": "Execute 'show ip route' on your router and paste the output below."
+            "evidence": ["Submitted evidence is currently insufficient to determine root cause."],
+            "explanation": "Additional Cisco CLI show command evidence is required to verify network routing and interface states.",
+            "recommended_fix": "Run the requested Cisco show command in Packet Tracer and paste the output below.",
+            "commands": ["show ip route"],
+            "expected_output": "Valid routing table entries for target destination subnet.",
+            "verification_steps": ["Paste output of 'show ip route' into NetSage AI."],
+            "next_evidence_required": "show ip route",
+            "alternative_causes": ["Missing static or dynamic OSPF/EIGRP route."]
         }
