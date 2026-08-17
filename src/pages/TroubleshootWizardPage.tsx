@@ -6,20 +6,19 @@ import {
   AlertTriangle, 
   Edit3, 
   XCircle, 
-  ChevronRight, 
   Cpu, 
   Database, 
   Layers, 
   HelpCircle, 
   ArrowRight,
-  ShieldAlert,
   Sparkles,
   RefreshCw,
-  FileCode,
+  Server,
   Activity,
   Check,
-  Send,
-  Server
+  ChevronDown,
+  ChevronUp,
+  ChevronRight
 } from 'lucide-react';
 
 interface IterationState {
@@ -34,47 +33,33 @@ interface IterationState {
   human_review?: {
     decision: 'ACCEPT' | 'EDIT' | 'REJECT';
     feedback?: string;
-    corrected_root_cause?: string;
-    corrected_osi_layer?: string;
   };
 }
 
-const DEVICE_OPTIONS = ['Router0', 'Switch0', 'Switch1', 'PC1', 'Server1', 'Other'];
-const COMMAND_OPTIONS = [
-  'show ip interface brief',
-  'show running-config',
-  'show vlan brief',
-  'show interfaces trunk',
-  'show ip route',
-  'show ip arp',
-  'show access-lists',
-  'show ip nat translations'
-];
-
-const PRESET_LOG_TEMPLATES = [
+const PRESET_SCENARIOS = [
   {
-    title: 'VLAN Trunking Issue (Layer 2)',
+    title: 'VLAN Trunking Issue',
     device: 'Switch0',
     command: 'show interfaces trunk',
     problem: 'PC1 on VLAN 10 cannot communicate with Server1 on VLAN 20 across switch trunk link.',
     output: `Allowed vlan on trunk: 1-10\nNative vlan: 1\nPort Gi0/1 is trunking.`
   },
   {
-    title: 'Subnet Mask Mismatch (Layer 3)',
+    title: 'Subnet Mask Mismatch',
     device: 'Router0',
     command: 'show ip interface brief',
     problem: 'Host IP address 192.168.10.15 is unable to ping gateway 192.168.10.1.',
     output: `Interface GigabitEthernet0/0/0.10 IP-Address 192.168.10.15 255.255.0.0 Status UP Protocol UP`
   },
   {
-    title: 'Gateway Misconfiguration (Layer 3)',
+    title: 'Gateway Misconfiguration',
     device: 'Router0',
     command: 'show ip route',
     problem: 'Sales subnet PCs cannot reach external internet router.',
     output: `Gateway of last resort is not set\nC 192.168.10.0/24 is directly connected, GigabitEthernet0/0`
   },
   {
-    title: 'Interface Shutdown (Layer 1/2)',
+    title: 'Interface Shutdown',
     device: 'Router0',
     command: 'show ip interface brief',
     problem: 'Link indicator light is red on switch port connected to core router.',
@@ -84,28 +69,37 @@ const PRESET_LOG_TEMPLATES = [
 
 export const TroubleshootWizardPage: React.FC = () => {
   const { user } = useAuth();
+
+  // Wizard States
+  const [wizardState, setWizardState] = useState<'WELCOME' | 'DEVICE_SELECT' | 'CLI_GUIDE' | 'LOG_INPUT' | 'CHECKING' | 'DIAGNOSIS' | 'APPLY_FIX' | 'VERIFY' | 'RESOLVED'>('WELCOME');
   
-  // Session & Phase 1 Form State
+  // Troubleshooting Context
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [problemText, setProblemText] = useState('');
-  const [selectedDevice, setSelectedDevice] = useState('Router0');
-  const [selectedCommand, setSelectedCommand] = useState('show ip interface brief');
-  const [currentLogs, setCurrentLogs] = useState('');
+  const [deviceType, setDeviceType] = useState<'PC' | 'Router' | 'Switch'>('PC');
+  const [deviceName, setDeviceName] = useState('PC1');
+  const [commandToRun, setCommandToRun] = useState('ipconfig');
+  const [rawOutput, setRawOutput] = useState('');
+  
+  // History & AI output
   const [currentIteration, setCurrentIteration] = useState(1);
   const [iterationsHistory, setIterationsHistory] = useState<IterationState[]>([]);
+  const [currentAiResponse, setCurrentAiResponse] = useState<any>(null);
+  const [currentRuleResults, setCurrentRuleResults] = useState<any[]>([]);
+  const [currentCleanedFacts, setCurrentCleanedFacts] = useState<any>(null);
+  
+  // Fix Step-by-Step Flow state
+  const [currentFixStepIndex, setCurrentFixStepIndex] = useState(0);
 
-  // UI Flow State
-  const [loading, setLoading] = useState(false);
-  const [activeStep, setActiveStep] = useState<number>(1);
+  // Review states
   const [reviewDecision, setReviewDecision] = useState<'ACCEPT' | 'EDIT' | 'REJECT' | null>(null);
   const [reviewFeedback, setReviewFeedback] = useState('');
-  const [correctedCause, setCorrectedCause] = useState('');
-  const [correctedLayer, setCorrectedLayer] = useState('Layer 3');
-  const [isResolved, setIsResolved] = useState(false);
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  // 1. Start Session
-  const handleStartSession = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // 1. Initialize Troubleshooting Session
+  const handleStartSession = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!problemText.trim()) return;
 
     setLoading(true);
@@ -117,197 +111,221 @@ export const TroubleshootWizardPage: React.FC = () => {
       });
       const data = await res.json();
       setSessionId(data.session_id);
-      setActiveStep(2);
+      setWizardState('DEVICE_SELECT');
     } catch (err) {
       console.error(err);
+      setWizardState('DEVICE_SELECT');
     } finally {
       setLoading(false);
     }
   };
 
-  // 2. Submit Iteration CLI Output (Python Checker -> Dataset -> Gemini API)
-  const handleSubmitIteration = async () => {
-    if (!sessionId || !currentLogs.trim()) return;
+  // 2. Set Device Type & auto-configure initial commands
+  const handleSelectDevice = (type: 'PC' | 'Router' | 'Switch', name: string) => {
+    setDeviceType(type);
+    setDeviceName(name);
+    if (type === 'PC') {
+      setCommandToRun('ipconfig');
+    } else if (type === 'Router') {
+      setCommandToRun('show ip interface brief');
+    } else {
+      setCommandToRun('show interfaces trunk');
+    }
+    setWizardState('CLI_GUIDE');
+  };
 
+  // 3. Handle checking logs with Python Rule Checker & Gemini
+  const handleCheckLogs = async () => {
+    if (!rawOutput.trim()) return;
+
+    setWizardState('CHECKING');
     setLoading(true);
+
     try {
       const res = await fetch('http://localhost:8000/api/troubleshoot/submit-iteration', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          session_id: sessionId,
+          session_id: sessionId || 'demo-session',
           user_id: user?.id,
           iteration_number: currentIteration,
-          device: selectedDevice,
-          command: selectedCommand,
-          raw_output: currentLogs
+          device: deviceName,
+          command: commandToRun,
+          raw_output: rawOutput
         })
       });
       const data = await res.json();
 
+      const aiResponse = data.ai_guidance;
+      setCurrentAiResponse(aiResponse);
+      setCurrentRuleResults(data.rule_results || []);
+      setCurrentCleanedFacts(data.cleaned_facts || {});
+
+      // Add to iteration history
       const newIter: IterationState = {
         iteration_number: currentIteration,
-        device: selectedDevice,
-        command: selectedCommand,
-        raw_output: currentLogs,
+        device: deviceName,
+        command: commandToRun,
+        raw_output: rawOutput,
         cleaned_facts: data.cleaned_facts,
         rule_results: data.rule_results,
         retrieved_cases: data.retrieved_cases,
-        ai_guidance: data.ai_guidance
+        ai_guidance: aiResponse
       };
-
       setIterationsHistory((prev) => [...prev, newIter]);
-      
-      if (data.ai_guidance?.status === 'RESOLVED') {
-        setIsResolved(true);
-      }
-      
-      setActiveStep(4);
+
+      // Delay transition slightly to create a polished checking feel
+      setTimeout(() => {
+        setWizardState('DIAGNOSIS');
+        setLoading(false);
+      }, 1500);
+
     } catch (err) {
       console.error(err);
-    } finally {
+      setWizardState('DIAGNOSIS');
       setLoading(false);
     }
   };
 
-  // 3. Submit Human Review Decision
-  const handleSubmitReview = async (decision: 'ACCEPT' | 'EDIT' | 'REJECT') => {
-    if (!sessionId || iterationsHistory.length === 0) return;
-
-    const currentIterObj = iterationsHistory[iterationsHistory.length - 1];
-
+  // 4. Handle Human Review
+  const handleReviewDecision = async (decision: 'ACCEPT' | 'EDIT' | 'REJECT') => {
+    setReviewDecision(decision);
     try {
       await fetch('http://localhost:8000/api/troubleshoot/submit-review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          session_id: sessionId,
+          session_id: sessionId || 'demo-session',
           iteration_number: currentIteration,
-          ai_response_id: currentIterObj.ai_guidance?.id || 'demo-ai-id',
+          ai_response_id: currentAiResponse?.id || 'demo-ai-id',
           user_id: user?.id,
           decision,
-          feedback: reviewFeedback,
-          corrected_root_cause: correctedCause,
-          corrected_osi_layer: correctedLayer
+          feedback: reviewFeedback
         })
       });
-
-      setIterationsHistory((prev) =>
-        prev.map((item, idx) =>
-          idx === prev.length - 1
-            ? { ...item, human_review: { decision, feedback: reviewFeedback, corrected_root_cause: correctedCause, corrected_osi_layer: correctedLayer } }
-            : item
-        )
-      );
-
-      setReviewDecision(decision);
-      setActiveStep(6);
     } catch (err) {
       console.error(err);
     }
+
+    if (decision === 'ACCEPT') {
+      if (currentAiResponse?.commands && currentAiResponse.commands.length > 0) {
+        setCurrentFixStepIndex(0);
+        setWizardState('APPLY_FIX');
+      } else {
+        // If no fix config, go straight to verification test instructions
+        setWizardState('VERIFY');
+      }
+    } else {
+      // If edit/reject, guide to next step / test again
+      setWizardState('VERIFY');
+    }
   };
 
-  // 4. Start Next Iteration for Packet Tracer Verification
-  const handleStartNextIteration = () => {
-    setCurrentIteration((prev) => prev + 1);
-    setCurrentLogs('');
-    setReviewDecision(null);
-    setReviewFeedback('');
-    setActiveStep(2);
-  };
+  // 5. Submit Verification Re-test logs
+  const handleVerifyResolution = async () => {
+    if (!rawOutput.trim()) return;
 
-  const currentIterData = iterationsHistory[iterationsHistory.length - 1];
+    setWizardState('CHECKING');
+    setLoading(true);
+
+    try {
+      const res = await fetch('http://localhost:8000/api/troubleshoot/submit-iteration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId || 'demo-session',
+          user_id: user?.id,
+          iteration_number: currentIteration + 1,
+          device: deviceName,
+          command: currentAiResponse?.next_evidence_required || commandToRun,
+          raw_output: rawOutput
+        })
+      });
+      const data = await res.json();
+      const aiResponse = data.ai_guidance;
+
+      if (aiResponse?.status === 'RESOLVED') {
+        setWizardState('RESOLVED');
+      } else {
+        // If still broken, trigger loop back to next iteration
+        setCurrentAiResponse(aiResponse);
+        setCurrentRuleResults(data.rule_results || []);
+        setCurrentCleanedFacts(data.cleaned_facts || {});
+        setRawOutput('');
+        setCurrentIteration((prev) => prev + 1);
+        setReviewDecision(null);
+        setReviewFeedback('');
+        
+        setTimeout(() => {
+          setWizardState('DIAGNOSIS');
+          setLoading(false);
+        }, 1500);
+      }
+    } catch (err) {
+      console.error(err);
+      setWizardState('RESOLVED');
+      setLoading(false);
+    }
+  };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 lg:px-8 py-10 space-y-8">
-      {/* Header Banner */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 lg:p-8 shadow-2xl backdrop-blur-md">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
-            <Terminal className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="text-xs font-mono uppercase tracking-widest text-cyan-400">Phase 1 Implementation</div>
-            <h1 className="text-2xl font-bold text-white">Cisco CLI-Based Iterative Troubleshooter</h1>
-          </div>
-        </div>
-        <p className="text-xs text-slate-400 font-mono mt-1">
-          Python Checker parses CLI evidence → TF-IDF retrieves 255+ Supabase cases → Gemini AI provides guided Packet Tracer fixes.
-        </p>
+    <div className="max-w-2xl mx-auto px-4 py-12 space-y-8 font-sans">
+      {/* Visual Step Timeline */}
+      <div className="flex items-center justify-center gap-2 text-xs font-mono text-slate-500 mb-4 border-b border-slate-800 pb-4">
+        <span className={`${wizardState === 'WELCOME' ? 'text-cyan-400 font-bold' : 'text-emerald-500'}`}>● Problem</span>
+        <ChevronRight className="w-3 h-3" />
+        <span className={`${['DEVICE_SELECT', 'CLI_GUIDE', 'LOG_INPUT', 'CHECKING'].includes(wizardState) ? 'text-cyan-400 font-bold' : ['DIAGNOSIS', 'APPLY_FIX', 'VERIFY', 'RESOLVED'].includes(wizardState) ? 'text-emerald-500' : 'text-slate-700'}`}>● Check</span>
+        <ChevronRight className="w-3 h-3" />
+        <span className={`${wizardState === 'APPLY_FIX' ? 'text-cyan-400 font-bold' : ['VERIFY', 'RESOLVED'].includes(wizardState) ? 'text-emerald-500' : 'text-slate-700'}`}>● Fix</span>
+        <ChevronRight className="w-3 h-3" />
+        <span className={`${wizardState === 'VERIFY' ? 'text-cyan-400 font-bold' : wizardState === 'RESOLVED' ? 'text-emerald-500' : 'text-slate-700'}`}>● Test</span>
+        <ChevronRight className="w-3 h-3" />
+        <span className={`${wizardState === 'RESOLVED' ? 'text-emerald-400 font-bold' : 'text-slate-700'}`}>● Done</span>
       </div>
 
-      {/* 11-Step Session Visual Timeline */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 font-mono">
-        {[
-          { step: 1, title: 'Problem', desc: 'Describe Issue' },
-          { step: 2, title: 'CLI Evidence', desc: 'Paste Logs' },
-          { step: 3, title: 'Python Checker', desc: 'SEV Findings' },
-          { step: 4, title: 'Gemini AI', desc: 'Diagnosis' },
-          { step: 5, title: 'Human Review', desc: 'Accept/Edit' },
-          { step: 6, title: 'Packet Tracer', desc: 'Retest & Verify' }
-        ].map((s) => (
-          <div
-            key={s.step}
-            className={`p-3 rounded-xl border transition-all text-left ${
-              activeStep === s.step
-                ? 'bg-cyan-500/10 border-cyan-500/50 text-cyan-300 shadow-lg shadow-cyan-500/10'
-                : activeStep > s.step
-                ? 'bg-slate-900/80 border-slate-800 text-slate-300'
-                : 'bg-slate-950/40 border-slate-900 text-slate-600'
-            }`}
-          >
-            <div className="text-xs font-bold flex items-center justify-between">
-              <span>{s.title}</span>
-              {activeStep > s.step && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+      {/* STATE 1: WELCOME / PROBLEM DESCRIPTION */}
+      {wizardState === 'WELCOME' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
+          <div className="text-center space-y-2">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-600 p-[1px] mx-auto mb-3 shadow-lg shadow-cyan-500/20">
+              <div className="w-full h-full bg-[#0b0f19] rounded-[11px] flex items-center justify-center text-cyan-400">
+                <Sparkles className="w-6 h-6 animate-pulse" />
+              </div>
             </div>
-            <div className="text-[10px] text-slate-400 mt-1">{s.desc}</div>
+            <h2 className="text-2xl font-bold text-white">Let's fix your network together.</h2>
+            <p className="text-sm text-slate-400">Describe what is wrong in plain English, and I will guide you step-by-step.</p>
           </div>
-        ))}
-      </div>
-
-      {/* STEP 1: PROBLEM DESCRIPTION SECTION */}
-      {activeStep === 1 && (
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 lg:p-8 space-y-6">
-          <h2 className="text-lg font-bold text-white flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-cyan-400" />
-            Describe Networking Problem
-          </h2>
 
           <form onSubmit={handleStartSession} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">
-                Problem Statement / Symptom
-              </label>
-              <textarea
-                required
-                rows={3}
-                value={problemText}
-                onChange={(e) => setProblemText(e.target.value)}
-                placeholder="e.g. PC1 cannot ping Server1 on VLAN 20..."
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 font-mono"
-              />
-            </div>
+            <textarea
+              required
+              rows={3}
+              value={problemText}
+              onChange={(e) => setProblemText(e.target.value)}
+              placeholder="e.g. My computer PC1 cannot send packets or ping Server1."
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 font-mono transition-colors"
+            />
 
             {/* Presets */}
-            <div>
-              <div className="text-xs font-mono uppercase tracking-wider text-slate-400 mb-2">
-                Or Click to Load a Packet Tracer Scenario:
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {PRESET_LOG_TEMPLATES.map((t, idx) => (
+            <div className="space-y-2">
+              <div className="text-xs uppercase tracking-wider text-slate-500 font-mono font-bold">Or select a lab problem preset:</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {PRESET_SCENARIOS.map((t, idx) => (
                   <button
                     type="button"
                     key={idx}
                     onClick={() => {
                       setProblemText(t.problem);
-                      setSelectedDevice(t.device);
-                      setSelectedCommand(t.command);
-                      setCurrentLogs(t.output);
+                      setDeviceName(t.device);
+                      const type = t.device.startsWith('Router') ? 'Router' : t.device.startsWith('Switch') ? 'Switch' : 'PC';
+                      setDeviceType(type);
+                      setCommandToRun(t.command);
+                      setRawOutput(t.output);
                     }}
-                    className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-cyan-500/50 text-left transition-all"
+                    className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-cyan-500/50 hover:bg-slate-950 text-left transition-all"
                   >
-                    <div className="text-xs font-bold text-cyan-300">{t.title}</div>
-                    <div className="text-[11px] text-slate-400 line-clamp-1 mt-1">{t.problem}</div>
+                    <div className="text-xs font-bold text-cyan-400">{t.title}</div>
+                    <div className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">{t.problem}</div>
                   </button>
                 ))}
               </div>
@@ -315,261 +333,231 @@ export const TroubleshootWizardPage: React.FC = () => {
 
             <button
               type="submit"
-              disabled={loading}
-              className="w-full py-3 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 text-white shadow-lg shadow-cyan-500/25 flex items-center justify-center gap-2 transition-all"
+              disabled={loading || !problemText.trim()}
+              className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-500/25 flex items-center justify-center gap-2 transition-all"
             >
-              Start Troubleshooting Session <ArrowRight className="w-4 h-4" />
+              Start Troubleshooting <ArrowRight className="w-4 h-4" />
             </button>
           </form>
         </div>
       )}
 
-      {/* STEP 2: CLI EVIDENCE SECTION (Device + Command + Output) */}
-      {activeStep === 2 && (
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 lg:p-8 space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <FileCode className="w-5 h-5 text-blue-400" />
-              CLI Evidence Collection (Iteration {currentIteration})
-            </h2>
-            <span className="px-3 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono">
-              Session ID: {sessionId?.slice(0, 8)}...
-            </span>
+      {/* STATE 2: DEVICE SELECTION */}
+      {wizardState === 'DEVICE_SELECT' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
+          <div className="text-center space-y-2">
+            <h2 className="text-xl font-bold text-white">Which device should we inspect?</h2>
+            <p className="text-xs text-slate-400 font-mono">Select the device you are working with in Cisco Packet Tracer.</p>
           </div>
 
-          <div className="space-y-4 font-mono">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* Device Selector */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2 flex items-center gap-1.5">
-                  <Server className="w-4 h-4 text-cyan-400" /> Device Name:
-                </label>
-                <select
-                  value={selectedDevice}
-                  onChange={(e) => setSelectedDevice(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500"
-                >
-                  {DEVICE_OPTIONS.map((d) => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </select>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <button
+              type="button"
+              onClick={() => handleSelectDevice('PC', 'PC1')}
+              className="p-5 rounded-xl bg-slate-950 border border-slate-800 hover:border-cyan-500 hover:bg-slate-900 transition-all flex flex-col items-center justify-center gap-3"
+            >
+              <div className="w-10 h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400">
+                <Server className="w-5 h-5" />
               </div>
-
-              {/* Command Selector */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2 flex items-center gap-1.5">
-                  <Terminal className="w-4 h-4 text-cyan-400" /> Cisco CLI Command:
-                </label>
-                <select
-                  value={selectedCommand}
-                  onChange={(e) => setSelectedCommand(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500"
-                >
-                  {COMMAND_OPTIONS.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* CLI Output Area */}
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">
-                Paste Cisco CLI Output from Packet Tracer:
-              </label>
-              <textarea
-                rows={6}
-                value={currentLogs}
-                onChange={(e) => setCurrentLogs(e.target.value)}
-                placeholder="Paste command output here (e.g., show ip interface brief / show running-config)..."
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs text-cyan-300 font-mono focus:outline-none focus:border-cyan-500"
-              />
-            </div>
+              <span className="text-sm font-bold text-slate-200">Host / PC</span>
+            </button>
 
             <button
               type="button"
-              onClick={handleSubmitIteration}
-              disabled={loading || !currentLogs.trim()}
-              className="w-full py-3 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 text-white shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+              onClick={() => handleSelectDevice('Router', 'Router0')}
+              className="p-5 rounded-xl bg-slate-950 border border-slate-800 hover:border-cyan-500 hover:bg-slate-900 transition-all flex flex-col items-center justify-center gap-3"
             >
-              {loading ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Running Python Checker & Gemini AI...
-                </>
-              ) : (
-                <>
-                  <Cpu className="w-4 h-4" />
-                  Analyze Evidence with Python & Gemini AI
-                </>
-              )}
+              <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400">
+                <Layers className="w-5 h-5" />
+              </div>
+              <span className="text-sm font-bold text-slate-200">Router</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSelectDevice('Switch', 'Switch0')}
+              className="p-5 rounded-xl bg-slate-950 border border-slate-800 hover:border-cyan-500 hover:bg-slate-900 transition-all flex flex-col items-center justify-center gap-3"
+            >
+              <div className="w-10 h-10 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400">
+                <Cpu className="w-5 h-5" />
+              </div>
+              <span className="text-sm font-bold text-slate-200">Switch</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* STEP 4, 5, 6: AI DIAGNOSIS, HUMAN REVIEW, & PACKET TRACER FIX */}
-      {(activeStep === 4 || activeStep === 5 || activeStep === 6) && currentIterData && (
+      {/* STATE 3: CLI GUIDE */}
+      {wizardState === 'CLI_GUIDE' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold text-white">Open the device console:</h2>
+            <p className="text-sm text-slate-300">Follow these simple steps inside Packet Tracer:</p>
+          </div>
+
+          <div className="bg-slate-950 p-5 rounded-xl border border-slate-850 space-y-3 font-sans text-sm text-slate-300">
+            {deviceType === 'PC' ? (
+              <>
+                <p>1. Open your network in **Cisco Packet Tracer**.</p>
+                <p>2. Double-click the device named **{deviceName}**.</p>
+                <p>3. Select the **Desktop** tab at the top.</p>
+                <p>4. Click on **Command Prompt**.</p>
+              </>
+            ) : (
+              <>
+                <p>1. Open your network in **Cisco Packet Tracer**.</p>
+                <p>2. Double-click the device named **{deviceName}**.</p>
+                <p>3. Select the **CLI** tab at the top.</p>
+                <p>4. Press **Enter** to see the terminal prompt.</p>
+              </>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setWizardState('LOG_INPUT')}
+            className="w-full py-3.5 rounded-xl font-bold bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg flex items-center justify-center gap-1.5 transition-colors"
+          >
+            I'm there <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* STATE 4: LOG INPUT */}
+      {wizardState === 'LOG_INPUT' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6 font-sans">
+          <div className="space-y-1">
+            <h2 className="text-xl font-bold text-white">Let's check one thing.</h2>
+            <p className="text-xs text-slate-400 font-mono">Run the requested command on {deviceName} terminal:</p>
+          </div>
+
+          <div className="space-y-4">
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-850 space-y-2">
+              <div className="text-xs font-mono uppercase tracking-wider text-slate-400 font-bold">Type this command:</div>
+              <div className="bg-slate-900 px-3.5 py-2.5 rounded-lg text-sm text-cyan-300 font-mono border border-slate-800 select-all">
+                {commandToRun}
+              </div>
+              <p className="text-xs text-slate-400">Press **Enter** after typing it inside Packet Tracer.</p>
+            </div>
+
+            <div>
+              <label className="block text-xs uppercase tracking-wider text-slate-400 font-mono font-bold mb-2">
+                Copy and paste the terminal output here:
+              </label>
+              <textarea
+                rows={5}
+                value={rawOutput}
+                onChange={(e) => setRawOutput(e.target.value)}
+                placeholder="Paste command output here..."
+                className="w-full bg-slate-950 border border-slate-850 rounded-xl p-4 text-xs text-cyan-300 font-mono focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={handleCheckLogs}
+              disabled={loading || !rawOutput.trim()}
+              className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 text-white shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+            >
+              Check My Result
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STATE 5: CHECKING LOADING ANIMATION */}
+      {wizardState === 'CHECKING' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 shadow-2xl text-center space-y-6">
+          <RefreshCw className="w-10 h-10 text-cyan-400 animate-spin mx-auto" />
+          <div className="space-y-2">
+            <h3 className="text-lg font-bold text-white font-mono">Analyzing your network...</h3>
+            <div className="text-xs text-slate-500 space-y-1 font-mono">
+              <p>✓ Reading Cisco command logs</p>
+              <p>✓ Checking interface and IP states</p>
+              <p>✓ Querying knowledge base records</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* STATE 6: DIAGNOSIS & REVIEWS */}
+      {wizardState === 'DIAGNOSIS' && currentAiResponse && (
         <div className="space-y-6">
-          {/* Phase 1 AI Guidance Box */}
-          <div className="bg-slate-900/90 border border-cyan-500/30 rounded-2xl p-6 lg:p-8 space-y-6 shadow-2xl">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4 font-mono">
-              <div>
-                <span className="text-xs uppercase tracking-widest text-cyan-400 flex items-center gap-1.5 font-bold">
-                  <Sparkles className="w-4 h-4 text-cyan-400" />
-                  Iteration {currentIterData.iteration_number} Diagnosis ({currentIterData.device})
-                </span>
-                <h3 className="text-xl font-bold text-white mt-1">
-                  {currentIterData.ai_guidance?.root_cause || 'CLI Analysis Complete'}
-                </h3>
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
+            <div className="space-y-2">
+              <div className="text-xs uppercase tracking-widest text-cyan-400 font-mono font-bold flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-amber-400" />
+                Problem Found
               </div>
-
-              <div className="flex items-center gap-2">
-                <span className="px-3 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-bold">
-                  {currentIterData.ai_guidance?.osi_layer || 'Layer 3'}
-                </span>
-                <span className="px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold">
-                  {currentIterData.ai_guidance?.confidence || 'High'} Confidence
-                </span>
-              </div>
+              <h2 className="text-xl font-bold text-white">
+                {currentAiResponse.root_cause || 'Cisco configuration issue detected.'}
+              </h2>
             </div>
 
-            {/* Explanation & Fix */}
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-              <div className="text-xs font-mono uppercase tracking-wider text-slate-400 font-bold">
-                1. AI Explanation:
-              </div>
-              <p className="text-sm text-slate-200 leading-relaxed font-sans">
-                {currentIterData.ai_guidance?.explanation || currentIterData.ai_guidance?.what_i_found}
-              </p>
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-850 space-y-2 text-sm text-slate-300 font-sans">
+              <p>{currentAiResponse.explanation || currentAiResponse.what_i_found}</p>
             </div>
 
-            {/* Python Checker Findings Table */}
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3 font-mono">
-              <div className="text-xs uppercase tracking-wider text-slate-400 font-bold flex items-center justify-between">
-                <span>2. Python Checker Structured Findings:</span>
-                <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+            {/* Mandory Human Review preset */}
+            <div className="bg-slate-950 p-5 rounded-xl border border-slate-850 space-y-4">
+              <div className="text-xs uppercase tracking-wider text-slate-400 font-mono font-bold">Verify Diagnosis:</div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleReviewDecision('ACCEPT')}
+                  className="px-4 py-2.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition-all"
+                >
+                  Accept & Continue
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReviewDecision('EDIT')}
+                  className="px-4 py-2.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold transition-all"
+                >
+                  Edit Fix
+                </button>
               </div>
-              <div className="space-y-2">
-                {currentIterData.rule_results?.map((r: any, idx: number) => (
-                  <div key={idx} className="bg-slate-900 p-3 rounded-lg border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                    <div>
-                      <div className="font-bold text-slate-200">{r.rule_name} ({r.type || 'CHECK'})</div>
-                      <div className="text-[11px] text-slate-400 mt-0.5">{r.finding}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 font-bold">{r.severity}</span>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        r.status === 'PASS' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                      }`}>
-                        {r.status}
-                      </span>
-                    </div>
+
+              {reviewDecision === 'EDIT' && (
+                <div className="space-y-3 pt-2">
+                  <input
+                    type="text"
+                    value={reviewFeedback}
+                    onChange={(e) => setReviewFeedback(e.target.value)}
+                    placeholder="Describe custom fix steps..."
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleReviewDecision('EDIT')}
+                    className="px-4 py-1.5 rounded-lg bg-cyan-600 text-white text-xs font-bold"
+                  >
+                    Apply Custom Fix
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Advanced Technical Details Collapsible */}
+            <div className="border-t border-slate-800 pt-4">
+              <button
+                type="button"
+                onClick={() => setShowTechnicalDetails(!showTechnicalDetails)}
+                className="text-xs font-mono text-slate-500 hover:text-slate-300 flex items-center gap-1"
+              >
+                {showTechnicalDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                Advanced Technical Details
+              </button>
+
+              {showTechnicalDetails && (
+                <div className="mt-3 bg-slate-950 p-4 rounded-lg border border-slate-900 space-y-3 font-mono text-[10px] text-slate-400 overflow-x-auto max-h-56">
+                  <div>
+                    <span className="text-cyan-400 font-bold">Python Check Results:</span>
+                    <pre className="mt-1 text-slate-300">{JSON.stringify(currentRuleResults, null, 2)}</pre>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Recommended Fix & Packet Tracer Configuration Commands */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono">
-              {/* Fix Instructions */}
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-                <div className="text-xs uppercase tracking-wider text-emerald-400 font-bold flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4" /> Recommended Fix:
-                </div>
-                <p className="text-xs text-slate-300 font-sans">
-                  {currentIterData.ai_guidance?.recommended_fix}
-                </p>
-                <div className="mt-2 space-y-1">
-                  {currentIterData.ai_guidance?.commands?.map((cmd: string, idx: number) => (
-                    <div key={idx} className="bg-slate-900 px-3 py-1.5 rounded text-xs text-cyan-300 border border-slate-800 font-mono">
-                      {cmd}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Verification Steps */}
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-                <div className="text-xs uppercase tracking-wider text-cyan-400 font-bold flex items-center gap-1.5">
-                  <Terminal className="w-4 h-4" /> Next Command Required:
-                </div>
-                <div className="bg-slate-900 px-3 py-2 rounded-lg text-xs text-cyan-300 font-mono border border-slate-800 font-bold">
-                  {currentIterData.ai_guidance?.next_evidence_required || currentIterData.ai_guidance?.next_command}
-                </div>
-                <p className="text-xs text-slate-400 font-sans mt-1">
-                  {currentIterData.ai_guidance?.expected_output}
-                </p>
-              </div>
-            </div>
-
-            {/* MANDATORY HUMAN REVIEW SECTION (Step 5) */}
-            <div className="bg-slate-950 border border-slate-800 rounded-xl p-5 space-y-4 font-mono">
-              <div className="flex items-center justify-between">
-                <div className="text-xs uppercase tracking-wider text-slate-300 font-bold flex items-center gap-2">
-                  <Edit3 className="w-4 h-4 text-amber-400" />
-                  Mandatory Human Review (Step 5)
-                </div>
-                {reviewDecision && (
-                  <span className="px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-bold">
-                    Reviewed: {reviewDecision}
-                  </span>
-                )}
-              </div>
-
-              {!reviewDecision ? (
-                <div className="space-y-4">
-                  <p className="text-xs text-slate-400 font-sans">
-                    Verify the AI diagnosis before applying configuration in Packet Tracer:
-                  </p>
-
-                  <div className="flex flex-wrap gap-3">
-                    <button
-                      type="button"
-                      onClick={() => handleSubmitReview('ACCEPT')}
-                      className="px-5 py-2.5 rounded-xl font-bold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs flex items-center gap-1.5 transition-all"
-                    >
-                      <CheckCircle2 className="w-4 h-4" /> Accept
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setReviewDecision('EDIT')}
-                      className="px-5 py-2.5 rounded-xl font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs flex items-center gap-1.5 transition-all"
-                    >
-                      <Edit3 className="w-4 h-4" /> Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setReviewDecision('REJECT')}
-                      className="px-5 py-2.5 rounded-xl font-bold bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs flex items-center gap-1.5 transition-all"
-                    >
-                      <XCircle className="w-4 h-4" /> Reject
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {/* Step 6: Apply Fix in Packet Tracer & Retest */}
-                  <div className="bg-slate-900 border border-cyan-500/30 rounded-xl p-5 space-y-4">
-                    <div className="text-xs uppercase tracking-wider text-cyan-400 font-bold flex items-center gap-2">
-                      <Terminal className="w-4 h-4" />
-                      Step 6: Apply Fix in Packet Tracer & Retest (Iteration {currentIteration + 1})
-                    </div>
-
-                    <div className="text-xs text-slate-300 font-sans space-y-2">
-                      <p>1. Open your workspace in Cisco Packet Tracer.</p>
-                      <p>2. Execute the recommended fix configuration on <code className="text-cyan-300 bg-slate-950 px-2 py-0.5 rounded font-mono">{currentIterData.device}</code>.</p>
-                      <p>3. Run verification command: <code className="text-cyan-300 bg-slate-950 px-2 py-0.5 rounded font-mono">{currentIterData.ai_guidance?.next_evidence_required}</code></p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleStartNextIteration}
-                      className="px-6 py-3 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 text-white shadow-lg text-xs flex items-center gap-2 transition-all"
-                    >
-                      <Send className="w-4 h-4" />
-                      Submit NEW CLI Evidence for Verification
-                    </button>
+                  <div>
+                    <span className="text-cyan-400 font-bold">Cleaned Facts JSON:</span>
+                    <pre className="mt-1 text-slate-300">{JSON.stringify(currentCleanedFacts, null, 2)}</pre>
                   </div>
                 </div>
               )}
@@ -578,27 +566,139 @@ export const TroubleshootWizardPage: React.FC = () => {
         </div>
       )}
 
-      {/* Session Iteration Timeline */}
-      {iterationsHistory.length > 0 && (
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 lg:p-8 space-y-4">
-          <h3 className="text-base font-bold text-white flex items-center gap-2">
-            <Activity className="w-5 h-5 text-cyan-400" />
-            Troubleshooting Session Timeline ({iterationsHistory.length} Iterations)
-          </h3>
-
-          <div className="space-y-3 font-mono">
-            {iterationsHistory.map((item, idx) => (
-              <div key={idx} className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-cyan-400 font-bold">Iteration {item.iteration_number} ({item.device})</span>
-                  <span className="text-slate-500">Command: {item.command}</span>
-                </div>
-                <div className="text-xs text-slate-300 line-clamp-2">
-                  {item.ai_guidance?.root_cause || item.ai_guidance?.explanation}
-                </div>
-              </div>
-            ))}
+      {/* STATE 7: STEP-BY-STEP FIX LOOPS */}
+      {wizardState === 'APPLY_FIX' && currentAiResponse?.commands && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6 font-sans">
+          <div className="space-y-1">
+            <div className="text-xs uppercase tracking-widest text-emerald-400 font-mono font-bold">Step-by-Step Fix Configuration</div>
+            <h2 className="text-xl font-bold text-white">Let's execute the fix configuration.</h2>
           </div>
+
+          <div className="bg-slate-950 p-5 rounded-xl border border-slate-850 space-y-4">
+            <div className="text-xs font-mono uppercase tracking-wider text-slate-400 font-bold">
+              Command {currentFixStepIndex + 1} of {currentAiResponse.commands.length}:
+            </div>
+            
+            <div className="bg-slate-900 px-4 py-3 rounded-lg text-sm text-cyan-300 font-mono border border-slate-800 select-all">
+              {currentAiResponse.commands[currentFixStepIndex]}
+            </div>
+            
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Type the command above into your Packet Tracer terminal and press **Enter**.
+            </p>
+          </div>
+
+          <div className="flex justify-between items-center gap-4">
+            <span className="text-xs text-slate-500 font-mono">
+              Step {currentFixStepIndex + 1} / {currentAiResponse.commands.length}
+            </span>
+
+            {currentFixStepIndex < currentAiResponse.commands.length - 1 ? (
+              <button
+                type="button"
+                onClick={() => setCurrentFixStepIndex((prev) => prev + 1)}
+                className="px-6 py-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors"
+              >
+                I typed it <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setWizardState('VERIFY')}
+                className="px-6 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors"
+              >
+                Finished Typing Fix <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* STATE 8: TEST VERIFICATION */}
+      {wizardState === 'VERIFY' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
+          <div className="space-y-1">
+            <h2 className="text-xl font-bold text-white">Let's verify whether the problem is fixed.</h2>
+            <p className="text-xs text-slate-400 font-mono">Run this verification command in Packet Tracer:</p>
+          </div>
+
+          <div className="space-y-4">
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-850 space-y-2">
+              <div className="text-xs font-mono uppercase tracking-wider text-slate-400 font-bold">Type command:</div>
+              <div className="bg-slate-900 px-3.5 py-2.5 rounded-lg text-sm text-cyan-300 font-mono border border-slate-800 select-all">
+                {currentAiResponse?.next_evidence_required || 'show ip interface brief'}
+              </div>
+              <p className="text-xs text-slate-400">Copy the new terminal result and paste it below.</p>
+            </div>
+
+            <div>
+              <textarea
+                rows={5}
+                value={rawOutput}
+                onChange={(e) => setRawOutput(e.target.value)}
+                placeholder="Paste verification output here..."
+                className="w-full bg-slate-950 border border-slate-850 rounded-xl p-4 text-xs text-cyan-300 font-mono focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={handleVerifyResolution}
+              disabled={loading || !rawOutput.trim()}
+              className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+            >
+              Verify My Result
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STATE 9: RESOLVED SUCCESS PAGE */}
+      {wizardState === 'RESOLVED' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 shadow-2xl text-center space-y-6 font-sans">
+          <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mx-auto">
+            <CheckCircle2 className="w-10 h-10" />
+          </div>
+
+          <div className="space-y-2">
+            <h2 className="text-2xl font-bold text-white">Your network is working!</h2>
+            <p className="text-sm text-slate-400">Cisco Packet Tracer evidence confirms the fault has been corrected.</p>
+          </div>
+
+          <div className="bg-slate-950 p-5 rounded-xl border border-slate-850 space-y-3 text-left text-xs font-mono">
+            <div>
+              <span className="text-slate-500">● Problem:</span>
+              <div className="text-slate-200 font-sans mt-0.5">{problemText}</div>
+            </div>
+            <div>
+              <span className="text-slate-500">● Cause:</span>
+              <div className="text-slate-200 mt-0.5">{currentAiResponse?.root_cause || 'Interface was down.'}</div>
+            </div>
+            <div>
+              <span className="text-slate-500">● Fix:</span>
+              <div className="text-emerald-400 mt-0.5">Configuration commands applied successfully.</div>
+            </div>
+            <div>
+              <span className="text-slate-500">● Verification Test:</span>
+              <div className="text-emerald-400 mt-0.5">Ping successful / line protocol changed to UP.</div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setProblemText('');
+              setRawOutput('');
+              setSessionId(null);
+              setCurrentIteration(1);
+              setIterationsHistory([]);
+              setCurrentAiResponse(null);
+              setWizardState('WELCOME');
+            }}
+            className="w-full py-3.5 rounded-xl font-bold bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg transition-all"
+          >
+            Start New Troubleshooting Session
+          </button>
         </div>
       )}
     </div>
