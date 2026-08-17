@@ -1,0 +1,1997 @@
+Yes. Below is the **fully updated master prompt**, incorporating everything we finalized:
+
+* Strictly based on the PS
+* React + Vite frontend
+* Supabase as the complete persistent backend
+* Gemini AI
+* Python deterministic rule checker
+* 30+ networking cases
+* Dataset → retrieval → Gemini
+* AI diagnosis
+* Human **Accept / Edit / Reject**
+* Feedback required for Edit and Reject
+* AI verification
+* **AI can identify potentially wrong dataset information**
+* **Dataset corrections require human/admin approval**
+* Approved corrections update Supabase
+* Dataset correction history/audit trail
+* Future diagnoses use the updated dataset
+* Dashboard and Responsible AI
+* No unnecessary overengineering
+
+You can give the following prompt directly to a coding AI.
+
+---
+
+# MASTER DEVELOPMENT PROMPT — NETSAGE AI
+
+## 1. ROLE
+
+Act as a **senior full-stack developer, AI/ML engineer, networking engineer, Supabase architect, database designer, UI/UX designer, and software testing engineer**.
+
+Your task is to design and implement a complete, functional, polished web application called:
+
+# **NetSage AI**
+
+NetSage AI is an **AI-assisted networking troubleshooting platform for Cisco Packet Tracer and networking laboratory problems**.
+
+The system must combine:
+
+* Networking problem analysis
+* Cisco `show` command evidence
+* A structured networking troubleshooting dataset
+* Deterministic Python networking rules
+* Knowledge-base retrieval
+* Google Gemini AI
+* Human review
+* Human feedback
+* AI verification
+* Controlled dataset correction
+* Supabase persistence
+* Responsible AI analytics
+
+The project must be implemented as a **real working application**, not a static frontend mockup.
+
+---
+
+# 2. PRIMARY SOURCE OF TRUTH
+
+The provided **Problem Statement / PS document** is the primary source of truth.
+
+Follow the PS requirements strictly.
+
+Do not unnecessarily expand the project into an enterprise network-management platform.
+
+The core project should demonstrate:
+
+> **AI + Networking Knowledge Base + Deterministic Rules + Human Review + Responsible AI**
+
+The system must help a user diagnose a networking problem by analyzing the problem description and available Cisco/networking evidence.
+
+---
+
+# 3. CORE PROBLEM
+
+The user should be able to provide a networking problem such as:
+
+> PC1 receives an IP address but cannot communicate with Server1 on VLAN 20.
+
+The user can provide:
+
+* Problem description
+* Cisco `show` command output
+* Optional Packet Tracer topology screenshot
+* Optional topology description
+
+The system should then:
+
+```text
+Problem
+   ↓
+Problem Normalization
+   ↓
+Relevant Dataset Retrieval
+   ↓
+Deterministic Rule Checker
+   ↓
+Gemini AI Diagnosis
+   ↓
+Evidence-Based Result
+   ↓
+Human Review
+   ↓
+Accept / Edit / Reject
+   ↓
+Feedback if required
+   ↓
+AI Verification
+   ↓
+Final Diagnosis
+   ↓
+Store Everything in Supabase
+```
+
+---
+
+# 4. MOST IMPORTANT ARCHITECTURAL PRINCIPLE
+
+## Supabase is the single source of truth.
+
+**All important persistent application data must be stored in Supabase.**
+
+Do not build a system where important information exists only inside:
+
+* React state
+* localStorage
+* sessionStorage
+* hardcoded JavaScript arrays
+* mock JSON files
+* temporary frontend variables
+
+React state may temporarily hold UI information, but persistent information must be stored in Supabase.
+
+If the user:
+
+* refreshes the browser,
+* logs out,
+* logs back in,
+* opens the application later,
+
+their important data must still exist.
+
+---
+
+# 5. TECHNOLOGY STACK
+
+## Frontend
+
+Use:
+
+* React
+* Vite
+* TypeScript preferred
+* Tailwind CSS
+* React Router
+* Lucide React
+* Recharts
+
+## Backend
+
+Use:
+
+### Supabase
+
+* Supabase PostgreSQL
+* Supabase Authentication
+* Supabase Storage
+* Supabase Row Level Security
+* Supabase Edge Functions
+
+Supabase must act as the primary backend platform.
+
+---
+
+# 6. AI
+
+Use:
+
+## Google Gemini
+
+Gemini is responsible for:
+
+* Problem normalization
+* Networking reasoning
+* Diagnosis
+* Evidence interpretation
+* Feedback verification
+* Identifying possible dataset inconsistencies
+
+The Gemini API key must **never** be exposed to React.
+
+Use:
+
+```text
+React
+   ↓
+Supabase Edge Function
+   ↓
+Gemini API
+```
+
+Never:
+
+```text
+React
+   ↓
+Gemini API
+```
+
+with a client-side API key.
+
+---
+
+# 7. PYTHON RULE ENGINE
+
+Use Python for deterministic networking checks.
+
+The Python rule checker must not rely on Gemini for basic deterministic validation.
+
+It should independently check networking evidence.
+
+At minimum implement:
+
+1. Duplicate IP
+2. Wrong subnet mask
+3. Gateway mismatch
+4. Interface down
+5. Missing VLAN
+6. Missing route
+
+Additional useful rules may include:
+
+* Trunk mismatch
+* Native VLAN mismatch
+* DHCP configuration issue
+* Static route issue
+* ACL blocking condition
+* NAT configuration issue
+
+Only add rules when they can be implemented reliably.
+
+---
+
+# 8. DATASET REQUIREMENT
+
+Create a minimum dataset of:
+
+# **30 troubleshooting cases**
+
+The dataset must cover:
+
+* VLAN
+* Gateway
+* DHCP
+* DNS
+* Routing
+* ACL
+* NAT
+* Wireless
+
+Recommended distribution:
+
+```text
+VLAN          4
+Gateway       4
+DHCP          4
+DNS           3
+Routing       5
+ACL           4
+NAT           3
+Wireless      3
+----------------
+TOTAL        30
+```
+
+Cases should be realistic Packet Tracer/networking lab problems.
+
+Do not create meaningless duplicates.
+
+---
+
+# 9. DATASET STRUCTURE
+
+Each case should contain at least:
+
+```text
+case_id
+title
+symptom
+topology_note
+show_output
+expected_fault
+osi_layer
+concept
+severity
+next_command
+recommended_fix
+created_at
+updated_at
+```
+
+Example:
+
+```text
+CASE-007
+
+Title:
+Inter-VLAN communication failure
+
+Symptom:
+PC in VLAN 10 cannot reach server in VLAN 20.
+
+Topology:
+Router-on-a-stick with VLAN 10 and VLAN 20.
+
+Show Output:
+show ip route
+...
+
+Expected Fault:
+Missing route
+
+OSI Layer:
+Layer 3
+
+Concept:
+Routing
+
+Severity:
+High
+
+Next Command:
+show ip route
+
+Recommended Fix:
+Verify and configure the required route.
+```
+
+---
+
+# 10. DATASET MUST BE STORED IN SUPABASE
+
+The 30+ cases must be stored in the Supabase PostgreSQL database.
+
+Do not make the primary dataset a static:
+
+```text
+cases.json
+```
+
+or:
+
+```text
+const cases = [...]
+```
+
+inside React.
+
+React must retrieve the dataset from Supabase.
+
+---
+
+# 11. DATASET → GEMINI FLOW
+
+When the user submits a problem, do **not** blindly send the entire dataset to Gemini.
+
+Instead:
+
+```text
+User Problem
+     ↓
+Problem Normalization
+     ↓
+Search Supabase Dataset
+     ↓
+Retrieve Relevant Cases
+     ↓
+Top 3–5 Relevant Cases
+     ↓
+Send Relevant Cases to Gemini
+```
+
+The relevant cases should be determined using a retrieval system.
+
+---
+
+# 12. KNOWLEDGE-BASE RETRIEVAL
+
+Use a simple and reliable retrieval method.
+
+Recommended:
+
+* TF-IDF
+* Cosine similarity
+* Concept matching
+
+Implementation can use:
+
+* Python
+* scikit-learn
+* Pandas
+* NumPy
+
+Flow:
+
+```text
+Problem
+   ↓
+TF-IDF
+   ↓
+Cosine Similarity
+   ↓
+Concept Matching
+   ↓
+Rank Cases
+   ↓
+Top 3–5 Cases
+```
+
+The retrieved cases become contextual information for Gemini.
+
+---
+
+# 13. IMPORTANT DATASET PRINCIPLE
+
+The dataset is not merely a static reference.
+
+It is a **controlled knowledge base that can improve over time through human-validated corrections**.
+
+However:
+
+# Gemini must NEVER directly overwrite the dataset.
+
+Gemini may:
+
+* identify a possible incorrect case
+* propose a correction
+* explain why it believes the case is incorrect
+
+But only a human/admin-approved correction may modify the dataset.
+
+---
+
+# 14. PROBLEM NORMALIZATION
+
+Before diagnosis, Gemini should normalize the user's problem.
+
+Return structured information:
+
+```json
+{
+  "problem_summary": "",
+  "symptoms": [],
+  "possible_concepts": [],
+  "search_terms": []
+}
+```
+
+Example:
+
+```text
+Problem:
+PC cannot reach server.
+
+Symptoms:
+- PC has valid IP
+- Gateway responds
+- Server unreachable
+
+Possible concepts:
+- Routing
+- VLAN
+- ACL
+
+Search terms:
+- inter VLAN
+- routing
+- unreachable server
+```
+
+---
+
+# 15. RULE CHECKER
+
+After normalization, run the deterministic rule checker.
+
+Input:
+
+* Show command output
+* Available topology information
+* Problem information
+
+Output:
+
+```json
+{
+  "rules": [
+    {
+      "rule": "Gateway Check",
+      "status": "PASS",
+      "evidence": "..."
+    },
+    {
+      "rule": "Missing Route",
+      "status": "FAIL",
+      "evidence": "..."
+    }
+  ]
+}
+```
+
+The rule results must be stored in Supabase.
+
+---
+
+# 16. GEMINI DIAGNOSIS INPUT
+
+Gemini should receive:
+
+### 1. User Problem
+
+### 2. Normalized Problem
+
+### 3. Cisco Show Output
+
+### 4. Topology Information
+
+If available.
+
+### 5. Deterministic Rule Results
+
+### 6. Top Relevant Dataset Cases
+
+### 7. Relevant networking instructions
+
+---
+
+# 17. GEMINI DIAGNOSIS OUTPUT
+
+Gemini must return structured JSON:
+
+```json
+{
+  "root_cause": "",
+  "confidence": "High",
+  "osi_layer": "",
+  "evidence": [],
+  "next_command": "",
+  "fix_steps": [],
+  "alternative_causes": [],
+  "missing_evidence": []
+}
+```
+
+Confidence must be:
+
+```text
+High
+Medium
+Low
+```
+
+---
+
+# 18. AI DIAGNOSIS RULES
+
+Gemini must follow these rules.
+
+## Evidence First
+
+Every diagnosis must be supported by available evidence.
+
+## No Hallucination
+
+Never invent:
+
+* show output
+* topology information
+* device configuration
+* command results
+
+## Uncertainty
+
+If evidence is insufficient:
+
+```text
+Confidence: Low
+```
+
+and explain what evidence is missing.
+
+## Next Command
+
+Recommend the most useful next Cisco command.
+
+## Deterministic Priority
+
+If the Python rule checker detects a clear configuration issue, Gemini should consider that result strongly.
+
+## Dataset Context
+
+Retrieved cases are supporting information, not unquestionable truth.
+
+Gemini must independently compare the retrieved cases against the actual user evidence.
+
+---
+
+# 19. DIAGNOSIS UI
+
+Display:
+
+## Root Cause
+
+The likely networking problem.
+
+## Confidence
+
+High / Medium / Low.
+
+## OSI Layer
+
+Example:
+
+```text
+Layer 3 — Network
+```
+
+## Evidence
+
+Show actual evidence.
+
+Example:
+
+```text
+show ip route
+
+192.168.20.0/24 is not present.
+```
+
+## Rule Checker
+
+Example:
+
+```text
+✓ Gateway Check
+✓ Interface Check
+⚠ Missing Route
+✓ VLAN Check
+```
+
+## Next Command
+
+Terminal-style block:
+
+```text
+show ip route
+```
+
+## Fix Steps
+
+Numbered actionable steps.
+
+## Alternative Causes
+
+Possible secondary explanations.
+
+## Missing Evidence
+
+Information required to increase confidence.
+
+---
+
+# 20. HUMAN REVIEW IS MANDATORY
+
+After the AI diagnosis, the user must review it.
+
+Provide:
+
+```text
+[ ACCEPT ]
+[ EDIT ]
+[ REJECT ]
+```
+
+The diagnosis cannot be considered final until human review is completed.
+
+---
+
+# 21. ACCEPT FLOW
+
+If the user chooses:
+
+```text
+ACCEPT
+```
+
+store:
+
+```text
+decision = ACCEPT
+```
+
+in Supabase.
+
+The diagnosis becomes accepted.
+
+Dashboard statistics must update from the new Supabase data.
+
+---
+
+# 22. EDIT FLOW
+
+If the user chooses:
+
+```text
+EDIT
+```
+
+open a feedback form.
+
+Allow:
+
+* Corrected root cause
+* Corrected OSI layer
+* Human explanation
+
+Example:
+
+> The AI identified routing as the problem, but the actual issue is an ACL blocking traffic from VLAN 10 to VLAN 20.
+
+Then:
+
+```text
+EDIT
+ ↓
+Human Feedback
+ ↓
+AI Verification
+ ↓
+Final Diagnosis
+```
+
+---
+
+# 23. REJECT FLOW
+
+If the user chooses:
+
+```text
+REJECT
+```
+
+the user **must provide feedback**.
+
+Do not allow a rejection without an explanation.
+
+Example:
+
+> The AI diagnosis is incorrect because the routing table is correct and the ACL is blocking the traffic.
+
+Then:
+
+```text
+REJECT
+ ↓
+Mandatory Human Feedback
+ ↓
+AI Verification
+ ↓
+Final Diagnosis
+```
+
+This is required.
+
+---
+
+# 24. AI FEEDBACK VERIFICATION
+
+For EDIT and REJECT, Gemini should receive:
+
+* Original problem
+* Original diagnosis
+* Human decision
+* Human feedback
+* Show output
+* Rule results
+* Relevant dataset cases
+
+Return:
+
+```json
+{
+  "original_ai_correct": false,
+  "final_diagnosis": "",
+  "evidence": [],
+  "verification_reason": "",
+  "confidence": ""
+}
+```
+
+The verification should determine whether the human correction is supported by the available evidence.
+
+---
+
+# 25. DATASET ERROR DETECTION
+
+This is an important feature.
+
+During diagnosis or verification, Gemini should also determine whether a retrieved dataset case may itself be incorrect or outdated.
+
+Example:
+
+Dataset says:
+
+```text
+CASE-007
+
+Expected Fault:
+Missing VLAN
+
+OSI Layer:
+Layer 2
+```
+
+But actual evidence shows:
+
+```text
+VLAN exists.
+
+Destination network is missing from routing table.
+```
+
+Gemini may determine:
+
+```text
+Dataset case may be incorrect.
+```
+
+It should then generate a **dataset correction proposal**.
+
+Example:
+
+```json
+{
+  "dataset_issue_detected": true,
+  "case_id": "CASE-007",
+  "field": "expected_fault",
+  "current_value": "Missing VLAN",
+  "proposed_value": "Missing Inter-VLAN Route",
+  "reason": "VLAN 20 is present, but the destination network is absent from the routing table.",
+  "confidence": "High"
+}
+```
+
+---
+
+# 26. DATASET CORRECTION MUST BE HUMAN-APPROVED
+
+Never allow:
+
+```text
+Gemini → direct database UPDATE
+```
+
+Instead:
+
+```text
+Gemini
+   ↓
+Dataset Correction Proposal
+   ↓
+Human/Admin Review
+   ↓
+┌──────────────┬──────────────┐
+│ APPROVE      │ REJECT       │
+└──────────────┴──────────────┘
+```
+
+Optionally support:
+
+```text
+EDIT CORRECTION
+```
+
+before approval.
+
+---
+
+# 27. DATASET CORRECTION UI
+
+Admin should see:
+
+```text
+DATASET CORRECTION PROPOSAL
+
+Case:
+CASE-007
+
+Current Value:
+Missing VLAN
+
+AI Proposed Value:
+Missing Inter-VLAN Route
+
+Current OSI:
+Layer 2
+
+Proposed OSI:
+Layer 3
+
+Reason:
+VLAN 20 exists, but the destination network
+is missing from the routing table.
+
+AI Confidence:
+High
+
+[ APPROVE ]
+[ EDIT ]
+[ REJECT ]
+```
+
+---
+
+# 28. DATASET UPDATE FLOW
+
+If the admin approves:
+
+```text
+AI Proposal
+    ↓
+Admin Approval
+    ↓
+Supabase UPDATE
+    ↓
+cases table updated
+    ↓
+Correction history stored
+    ↓
+Future retrieval uses updated case
+```
+
+The new value must immediately become the active dataset value.
+
+---
+
+# 29. DATASET CORRECTION HISTORY
+
+Create a dedicated table:
+
+## `dataset_corrections`
+
+Fields:
+
+```text
+id
+case_id
+proposed_by
+original_value
+proposed_value
+field_name
+reason
+ai_confidence
+status
+reviewed_by
+reviewed_at
+created_at
+```
+
+Status:
+
+```text
+PENDING
+APPROVED
+REJECTED
+```
+
+If edited:
+
+```text
+EDITED
+```
+
+may also be used if appropriate.
+
+Never delete correction history merely because the correction was rejected.
+
+---
+
+# 30. DATASET VERSIONING / AUDITABILITY
+
+When an approved correction changes a case:
+
+Store:
+
+```text
+Original Value
+New Value
+Reason
+Who approved it
+When it was approved
+```
+
+This creates an auditable dataset evolution history.
+
+Example:
+
+```text
+CASE-007
+
+Version 1:
+Missing VLAN
+
+        ↓
+
+AI detected inconsistency
+
+        ↓
+
+Human approved correction
+
+        ↓
+
+Version 2:
+Missing Inter-VLAN Route
+```
+
+---
+
+# 31. FUTURE DIAGNOSES MUST USE UPDATED DATA
+
+This is critical.
+
+After a dataset correction is approved:
+
+```text
+Future Problem
+      ↓
+Supabase Dataset
+      ↓
+Updated CASE-007
+      ↓
+Retrieval
+      ↓
+Gemini
+```
+
+The old incorrect value must not continue being retrieved as the current knowledge-base answer.
+
+Historical records can retain the original value, but active retrieval must use the latest approved dataset.
+
+---
+
+# 32. RESPONSIBLE AI LEARNING LOOP
+
+The system should improve through controlled human feedback.
+
+Example:
+
+```text
+100 Diagnoses
+      ↓
+75 Accepted
+15 Edited
+10 Rejected
+      ↓
+Analyze Corrections
+      ↓
+Identify Recurring AI Errors
+      ↓
+Identify Dataset Problems
+      ↓
+Propose Dataset Corrections
+      ↓
+Human Approval
+      ↓
+Update Dataset
+      ↓
+Future Diagnoses Improve
+```
+
+This is **controlled improvement**, not autonomous self-modification.
+
+---
+
+# 33. DO NOT CALL THIS UNSUPERVISED SELF-LEARNING
+
+The system must not claim:
+
+> "Gemini automatically learns and modifies itself."
+
+That is not what is being implemented.
+
+The correct concept is:
+
+> **Human-supervised knowledge-base improvement using AI-generated correction proposals.**
+
+---
+
+# 34. RESPONSIBLE AI LOG
+
+Store at least 5 examples where:
+
+* AI was incorrect
+* Human corrected it
+* Feedback was provided
+* Verification occurred
+* Final result was established
+
+Example:
+
+| Case | AI Diagnosis | Human Correction | Result    |
+| ---- | ------------ | ---------------- | --------- |
+| 01   | Routing      | ACL              | Corrected |
+| 02   | VLAN         | Gateway          | Corrected |
+| 03   | DHCP         | Wrong subnet     | Corrected |
+| 04   | NAT          | ACL              | Corrected |
+| 05   | DNS          | Gateway          | Corrected |
+
+All of this should be persisted in Supabase.
+
+---
+
+# 35. DATABASE DESIGN
+
+Use Supabase PostgreSQL.
+
+Create:
+
+## `profiles`
+
+```text
+id
+name
+email
+role
+created_at
+updated_at
+```
+
+## `cases`
+
+```text
+id
+case_id
+title
+symptom
+topology_note
+show_output
+expected_fault
+osi_layer
+concept
+severity
+next_command
+recommended_fix
+version
+created_at
+updated_at
+```
+
+## `troubleshooting_sessions`
+
+```text
+id
+user_id
+problem_text
+normalized_problem
+show_output
+topology_data
+topology_image_path
+status
+created_at
+updated_at
+```
+
+## `rule_checker_results`
+
+```text
+id
+session_id
+rule_name
+status
+result
+evidence
+severity
+created_at
+```
+
+## `diagnoses`
+
+```text
+id
+session_id
+user_id
+root_cause
+confidence
+osi_layer
+evidence
+next_command
+fix_steps
+alternative_causes
+missing_evidence
+retrieved_case_ids
+model
+created_at
+```
+
+## `human_reviews`
+
+```text
+id
+diagnosis_id
+user_id
+decision
+feedback
+corrected_root_cause
+corrected_osi_layer
+created_at
+```
+
+## `verification_results`
+
+```text
+id
+review_id
+original_ai_correct
+final_diagnosis
+evidence
+verification_reason
+confidence
+created_at
+```
+
+## `dataset_corrections`
+
+```text
+id
+case_id
+field_name
+original_value
+proposed_value
+reason
+ai_confidence
+status
+proposed_by
+reviewed_by
+reviewed_at
+created_at
+```
+
+## `audit_logs`
+
+```text
+id
+user_id
+action
+entity
+entity_id
+payload
+created_at
+```
+
+---
+
+# 36. SUPABASE AUTHENTICATION
+
+Use Supabase Auth.
+
+Implement:
+
+* Sign Up
+* Login
+* Logout
+* Session persistence
+* Protected routes
+
+Do not implement custom password storage.
+
+---
+
+# 37. SUPABASE ROW LEVEL SECURITY
+
+Implement proper RLS.
+
+## USER
+
+A normal user can access:
+
+* Their own sessions
+* Their own diagnoses
+* Their own reviews
+* Their own verification results
+
+## ADMIN
+
+Admin can access:
+
+* Dataset
+* Dataset corrections
+* Responsible AI data
+* Analytics
+* Audit logs
+* User statistics
+
+Do not rely only on frontend route hiding.
+
+---
+
+# 38. SUPABASE STORAGE
+
+If topology screenshots are uploaded:
+
+```text
+React
+ ↓
+Supabase Storage
+ ↓
+File path stored in troubleshooting_sessions
+```
+
+Validate:
+
+* File type
+* File size
+* Authenticated user
+
+Supported formats:
+
+* PNG
+* JPG/JPEG
+* WEBP
+
+---
+
+# 39. DASHBOARD
+
+Create a clean dashboard showing:
+
+## Summary
+
+* Total Troubleshooting Sessions
+* Total Diagnoses
+* Accepted
+* Edited
+* Rejected
+* AI-Human Agreement Rate
+* Dataset Corrections
+
+## Issue Type Chart
+
+* VLAN
+* Gateway
+* DHCP
+* DNS
+* Routing
+* ACL
+* NAT
+* Wireless
+
+## Severity
+
+* Low
+* Medium
+* High
+* Critical
+
+## Responsible AI
+
+* Accepted
+* Edited
+* Rejected
+* Human correction rate
+
+All numbers must come from Supabase.
+
+Never hardcode statistics.
+
+---
+
+# 40. AI-HUMAN AGREEMENT
+
+Calculate the agreement rate from actual stored reviews.
+
+Do not hardcode:
+
+```text
+Agreement = 87%
+```
+
+Query Supabase and calculate it dynamically using a documented formula.
+
+For example, define clearly what counts as agreement.
+
+---
+
+# 41. ADMIN PANEL
+
+Keep it lightweight.
+
+Required sections:
+
+### Overview
+
+Analytics.
+
+### Dataset
+
+* View cases
+* Add case
+* Edit case
+* Delete case
+* Search cases
+* Upload CSV
+* Export CSV
+
+### Dataset Corrections
+
+* Pending
+* Approved
+* Rejected
+
+### Responsible AI
+
+* Human corrections
+* AI errors
+* Feedback
+* Verification
+
+### Users
+
+Basic statistics.
+
+### Audit Logs
+
+View important system actions.
+
+---
+
+# 42. FRONTEND PAGES
+
+Create:
+
+```text
+Landing Page
+Login
+Register
+User Dashboard
+Troubleshoot
+Diagnosis
+History
+Admin Dashboard
+Admin Dataset
+Admin Dataset Corrections
+Admin Responsible AI
+Admin Users
+Admin Audit Logs
+```
+
+---
+
+# 43. TROUBLESHOOTING WIZARD
+
+Use:
+
+```text
+STEP 1
+Problem Input
+
+STEP 2
+Evidence / Show Output
+
+STEP 3
+Analysis
+
+STEP 4
+Diagnosis
+
+STEP 5
+Human Review
+
+STEP 6
+Verification / Final Result
+```
+
+Show progress clearly.
+
+---
+
+# 44. UI DESIGN
+
+The application should look like a modern network troubleshooting/security platform.
+
+Use:
+
+* Dark navy/blue theme
+* Cyan/blue accents
+* Clean cards
+* Terminal-style command panels
+* Status badges
+* Network-inspired visuals
+* Clear typography
+* Professional spacing
+
+Do not make it look like a generic ChatGPT clone.
+
+---
+
+# 45. ERROR HANDLING
+
+Handle:
+
+* Gemini failure
+* Supabase failure
+* Invalid Gemini JSON
+* Empty problem
+* Missing evidence
+* Rule checker failure
+* Retrieval failure
+* Verification failure
+* Invalid CSV
+* Invalid image
+* Unauthorized request
+
+Never expose:
+
+* API keys
+* Database credentials
+* Internal stack traces
+* Sensitive backend information
+
+---
+
+# 46. DATA VALIDATION
+
+Validate all important inputs.
+
+## Problem
+
+Required.
+
+## Show Output
+
+Optional but sanitized.
+
+## Dataset
+
+Validate:
+
+* Required columns
+* Duplicate case IDs
+* Valid OSI layers
+* Valid severity
+* Missing values
+
+## AI Output
+
+Validate against the expected JSON schema.
+
+If invalid, retry or return a controlled error.
+
+---
+
+# 47. TESTING
+
+Implement tests for:
+
+## Python Rules
+
+Test:
+
+* Duplicate IP
+* Wrong subnet mask
+* Gateway mismatch
+* Interface down
+* Missing VLAN
+* Missing route
+
+## Retrieval
+
+Test whether relevant cases are retrieved.
+
+## AI Output
+
+Test:
+
+* Valid JSON
+* Required fields
+* Invalid responses
+
+## Human Review
+
+Test:
+
+* ACCEPT
+* EDIT
+* REJECT
+* EDIT requires feedback
+* REJECT requires feedback
+* Verification occurs
+
+## Dataset Corrections
+
+Test:
+
+* AI proposal
+* Human approval
+* Human rejection
+* Dataset update
+* Correction history
+* Future retrieval using updated data
+
+## Security
+
+Test:
+
+* User cannot access another user's data.
+* User cannot modify dataset.
+* User cannot approve dataset corrections unless authorized.
+* Admin-only resources are protected.
+
+---
+
+# 48. COMPLETE DATA FLOW
+
+The final application should follow this architecture:
+
+```text
+                         USER
+                          │
+                          ▼
+                  REACT FRONTEND
+                          │
+                          ▼
+                   SUPABASE AUTH
+                          │
+                          ▼
+                TROUBLESHOOTING SESSION
+                          │
+                          ▼
+                   SUPABASE DATABASE
+                          │
+             ┌────────────┼─────────────┐
+             │            │             │
+             ▼            ▼             ▼
+        CASE DATA     USER DATA     HISTORY
+             │
+             ▼
+       CASE RETRIEVAL
+             │
+             ▼
+      RELEVANT CASES
+             │
+             ▼
+       SECURE EDGE FUNCTION
+             │
+       ┌─────┴─────┐
+       ▼           ▼
+    GEMINI      PYTHON RULE
+      AI          CHECKER
+       │           │
+       └─────┬─────┘
+             ▼
+        AI DIAGNOSIS
+             │
+             ▼
+        HUMAN REVIEW
+       /      |       \
+  ACCEPT     EDIT     REJECT
+               \       /
+                FEEDBACK
+                   │
+                   ▼
+            AI VERIFICATION
+                   │
+                   ▼
+            FINAL DIAGNOSIS
+                   │
+                   ▼
+             SUPABASE
+                   │
+          ┌────────┴────────┐
+          ▼                 ▼
+       HISTORY          ANALYTICS
+                             
+```
+
+---
+
+# 49. DATASET IMPROVEMENT FLOW
+
+The additional controlled learning flow is:
+
+```text
+               EXISTING DATASET
+                      │
+                      ▼
+                Relevant Case
+                      │
+                      ▼
+                    GEMINI
+                      │
+                      ▼
+             Dataset Consistency
+                  Analysis
+                      │
+             ┌────────┴────────┐
+             │                 │
+          Correct          Potentially Wrong
+             │                 │
+             │                 ▼
+             │          Correction Proposal
+             │                 │
+             │                 ▼
+             │          Admin Review
+             │            /       \
+             │       APPROVE      REJECT
+             │          │
+             │          ▼
+             │    UPDATE SUPABASE
+             │          │
+             └──────────┴────────────┐
+                                     ▼
+                            UPDATED KNOWLEDGE BASE
+                                     │
+                                     ▼
+                             FUTURE DIAGNOSES
+```
+
+---
+
+# 50. CRITICAL RULE FOR DATASET UPDATES
+
+The system must follow:
+
+```text
+Gemini can PROPOSE.
+Human can APPROVE.
+Supabase can STORE.
+Future Gemini calls use the APPROVED dataset.
+```
+
+Never:
+
+```text
+Gemini → silently change dataset
+```
+
+---
+
+# 51. NO MOCK DATA IN THE FINAL APPLICATION
+
+During development, temporary mock data can be used if necessary.
+
+But the final application must use Supabase.
+
+The final dashboard, diagnosis history, human feedback, dataset, Responsible AI logs, and dataset correction records must all be backed by real Supabase data.
+
+---
+
+# 52. REQUIRED DELIVERABLES
+
+The final project should contain:
+
+```text
+NetSage AI
+│
+├── React + Vite frontend
+├── Supabase backend
+├── Supabase PostgreSQL
+├── Supabase Auth
+├── Supabase Storage
+├── Supabase Edge Functions
+├── Gemini integration
+├── Python rule checker
+├── 30+ case dataset
+├── Knowledge retrieval
+├── AI diagnosis
+├── Human review
+├── Feedback verification
+├── Dataset correction system
+├── Responsible AI log
+├── Dashboard
+├── Admin panel
+├── Tests
+└── README
+```
+
+---
+
+# 53. PROJECT PRIORITY
+
+Implement in this order.
+
+## Phase 1 — Foundation
+
+1. React + Vite
+2. Tailwind
+3. Supabase
+4. Authentication
+5. Database
+6. RLS
+7. Application routing
+
+## Phase 2 — Dataset
+
+8. Create 30+ cases
+9. Store cases in Supabase
+10. Dataset validation
+11. Retrieval
+
+## Phase 3 — Rule Engine
+
+12. Python rule checker
+13. Required six rules
+14. Save rule results to Supabase
+
+## Phase 4 — AI
+
+15. Gemini Edge Function
+16. Problem normalization
+17. Diagnosis
+18. Structured JSON
+19. Diagnosis UI
+
+## Phase 5 — Human Review
+
+20. Accept
+21. Edit
+22. Reject
+23. Mandatory Edit feedback
+24. Mandatory Reject feedback
+25. AI verification
+26. Final diagnosis
+
+## Phase 6 — Dataset Improvement
+
+27. Dataset consistency detection
+28. AI correction proposal
+29. Admin review
+30. Approve/reject/edit correction
+31. Supabase dataset update
+32. Correction history
+
+## Phase 7 — Analytics
+
+33. Dashboard
+34. Issue types
+35. Severity
+36. AI-human agreement
+37. Responsible AI
+
+## Phase 8 — Testing
+
+38. Rule tests
+39. Retrieval tests
+40. AI tests
+41. Review tests
+42. Dataset correction tests
+43. RLS/security tests
+44. End-to-end testing
+
+---
+
+# 54. FINAL ACCEPTANCE CHECKLIST
+
+The project is complete only when all of these work:
+
+* [ ] React application works
+* [ ] Supabase backend works
+* [ ] Supabase Auth works
+* [ ] PostgreSQL database works
+* [ ] RLS works
+* [ ] 30+ cases exist
+* [ ] VLAN covered
+* [ ] Gateway covered
+* [ ] DHCP covered
+* [ ] DNS covered
+* [ ] Routing covered
+* [ ] ACL covered
+* [ ] NAT covered
+* [ ] Wireless covered
+* [ ] Problem submission works
+* [ ] Show-command submission works
+* [ ] Optional topology upload works
+* [ ] Problem normalization works
+* [ ] Dataset retrieval works
+* [ ] Python rule checker works
+* [ ] Duplicate IP check works
+* [ ] Subnet mask check works
+* [ ] Gateway check works
+* [ ] Interface-down check works
+* [ ] Missing VLAN check works
+* [ ] Missing route check works
+* [ ] Gemini diagnosis works
+* [ ] Root cause displayed
+* [ ] Confidence displayed
+* [ ] OSI layer displayed
+* [ ] Evidence displayed
+* [ ] Next command displayed
+* [ ] Fix steps displayed
+* [ ] Human review mandatory
+* [ ] ACCEPT works
+* [ ] EDIT works
+* [ ] REJECT works
+* [ ] EDIT requires feedback
+* [ ] REJECT requires feedback
+* [ ] AI verification works
+* [ ] Final diagnosis saved
+* [ ] Responsible AI log works
+* [ ] At least 5 corrected AI cases documented
+* [ ] Dataset inconsistency detection works
+* [ ] AI can propose dataset corrections
+* [ ] AI cannot directly modify dataset
+* [ ] Admin can approve/reject corrections
+* [ ] Approved correction updates Supabase
+* [ ] Correction history is stored
+* [ ] Future retrieval uses updated dataset
+* [ ] Dashboard uses live Supabase data
+* [ ] No important data depends on localStorage
+* [ ] Gemini key is server-side
+* [ ] Admin permissions work
+* [ ] User data isolation works
+* [ ] Audit trail works
+* [ ] End-to-end demo works
+
+---
+
+# 55. FINAL PRODUCT DEFINITION
+
+The final NetSage AI system should be understood as:
+
+> **A human-supervised AI networking troubleshooting platform that combines Cisco/networking evidence, deterministic Python validation, a Supabase-hosted troubleshooting knowledge base, Gemini-based reasoning, human feedback, and controlled knowledge-base improvement.**
+
+The core loop is:
+
+```text
+                    USER PROBLEM
+                         ↓
+                 NETWORK EVIDENCE
+                         ↓
+                  SUPABASE DATASET
+                         ↓
+                  RELEVANT CASES
+                         ↓
+              PYTHON RULE CHECKER
+                         ↓
+                    GEMINI AI
+                         ↓
+                  AI DIAGNOSIS
+                         ↓
+                HUMAN REVIEW
+               /      |       \
+          ACCEPT     EDIT     REJECT
+                       \        /
+                        FEEDBACK
+                           ↓
+                    AI VERIFICATION
+                           ↓
+                    FINAL RESULT
+                           ↓
+                      SUPABASE
+                           ↓
+                    RESPONSIBLE AI
+                           ↓
+              DATASET ERROR DETECTED?
+                     /            \
+                   NO              YES
+                   │                │
+                   │          AI PROPOSAL
+                   │                ↓
+                   │         HUMAN/ADMIN REVIEW
+                   │           /          \
+                   │       APPROVE       REJECT
+                   │          │
+                   │          ▼
+                   │     UPDATE SUPABASE
+                   │          │
+                   └──────────┴───────►
+                              │
+                              ▼
+                     UPDATED KNOWLEDGE BASE
+                              │
+                              ▼
+                     FUTURE DIAGNOSES
+```
+
+## The fundamental rule
+
+**Gemini reasons. Python validates. Supabase stores. Humans decide. Approved corrections improve the dataset.**
+
+Build the project around that principle and keep the implementation focused on the actual PS rather than adding unrelated features.
+
+Keys :
+gemini api key : YOUR_GEMINI_API_KEY
+supa :
+role : YOUR_SUPABASE_SERVICE_ROLE_KEY
+anon : YOUR_SUPABASE_ANON_KEY
+api key : YOUR_SUPABASE_PUBLISHABLE_KEY
