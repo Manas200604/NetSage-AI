@@ -1,838 +1,584 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabaseClient';
 import { 
   Terminal, 
-  Search, 
-  Cpu, 
   CheckCircle2, 
-  XCircle, 
   AlertTriangle, 
-  Layers, 
-  ArrowRight, 
-  ArrowLeft, 
-  Check, 
   Edit3, 
-  X, 
-  Sparkles, 
+  XCircle, 
+  ChevronRight, 
+  Cpu, 
   Database, 
-  ShieldCheck, 
-  Upload, 
+  Layers, 
+  HelpCircle, 
+  ArrowRight,
+  ShieldAlert,
+  Sparkles,
   RefreshCw,
   FileCode,
-  AlertCircle
+  Activity,
+  Check,
+  Send
 } from 'lucide-react';
 
-const EXAMPLE_SHOW_OUTPUTS = {
-  "VLAN Issue": `R1# show ip interface brief
-Gi0/0/0.10  192.168.10.1  YES manual UP  UP
-Gi0/0/0.20  unassigned    YES unset  DOWN DOWN
-S1# show switchport interface gi0/1
-Switchport: Enabled, Administrative Mode: trunk, Operational Mode: trunk`,
-  "Gateway Mismatch": `HostA Configuration: IP 192.168.1.45, Mask 255.255.255.0, Default Gateway 192.168.1.254
-R1# show ip interface brief
-GigabitEthernet0/0  192.168.1.1  YES manual UP UP`,
-  "Missing Route": `R1# show ip route
-Codes: C - connected, S - static
-Gateway of last resort is not set
-C       10.0.0.0 is directly connected, Serial0/0/0
-C    192.168.1.0/24 is directly connected, GigabitEthernet0/0`,
-  "DHCP Exhaustion": `R1# show ip dhcp binding
-Pool LAN_POOL: 254 addresses total, 254 allocated
-R1# show ip dhcp pool
-Pool LAN_POOL : Total addresses 254, Leased 254, Excluded 0`,
-  "Duplicate IP": `S1# show log
-%SYS-4-CONFIG_I: %IP-4-DUPADDR: Duplicate address 172.16.10.1 on Vlan10, sourced by mac 0002.4a11.88bc`
-};
+interface IterationState {
+  iteration_number: number;
+  command: string;
+  raw_output: string;
+  cleaned_facts: any;
+  rule_results: any[];
+  retrieved_cases: any[];
+  ai_guidance: any;
+  human_review?: {
+    decision: 'ACCEPT' | 'EDIT' | 'REJECT';
+    feedback?: string;
+    corrected_root_cause?: string;
+    corrected_osi_layer?: string;
+  };
+}
+
+const PRESET_LOG_TEMPLATES = [
+  {
+    title: 'VLAN 20 Missing on Trunk (Layer 2)',
+    problem: 'PC1 on VLAN 10 cannot communicate with Server1 on VLAN 20 across the trunk link.',
+    command: 'show interfaces trunk',
+    output: `Allowed vlan on trunk: 1-10\nNative vlan: 1\nPort Gi0/1 is trunking.`
+  },
+  {
+    title: 'Subnet Mask Mismatch (Layer 3)',
+    problem: 'Host IP address 192.168.10.15 is unable to ping gateway 192.168.10.1.',
+    command: 'show ip interface brief',
+    output: `Interface GigabitEthernet0/0/0.10 IP-Address 192.168.10.15 255.255.0.0 Status UP Protocol UP`
+  },
+  {
+    title: 'Gateway Misconfiguration (Layer 3)',
+    problem: 'Sales subnet PCs cannot reach external internet router.',
+    command: 'show ip route',
+    output: `Gateway of last resort is not set\nC 192.168.10.0/24 is directly connected, GigabitEthernet0/0`
+  },
+  {
+    title: 'Interface Shutdown (Layer 1/2)',
+    problem: 'Link indicator light is red on switch port connected to core router.',
+    command: 'show ip interface brief',
+    output: `Interface GigabitEthernet0/0/1 IP-Address 10.0.0.1 YES NVRAM administratively down DOWN`
+  }
+];
 
 export const TroubleshootWizardPage: React.FC = () => {
   const { user } = useAuth();
-  const navigate = useNavigate();
-
-  const [step, setStep] = useState<number>(1);
-  const [problemText, setProblemText] = useState<string>('');
-  const [topologyNote, setTopologyNote] = useState<string>('');
-  const [showOutput, setShowOutput] = useState<string>('');
-  const [topologyImage, setTopologyImage] = useState<File | null>(null);
-
-  // Diagnostic State
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const [normalized, setNormalized] = useState<any>(null);
-  const [ruleResults, setRuleResults] = useState<any[]>([]);
-  const [relevantCases, setRelevantCases] = useState<any[]>([]);
-  const [diagnosis, setDiagnosis] = useState<any>(null);
+  
+  // Session State
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [problemText, setProblemText] = useState('');
+  const [currentCommand, setCurrentCommand] = useState('show running-config');
+  const [currentLogs, setCurrentLogs] = useState('');
+  const [currentIteration, setCurrentIteration] = useState(1);
+  const [iterationsHistory, setIterationsHistory] = useState<IterationState[]>([]);
 
-  // Review & Verification State
-  const [humanDecision, setHumanDecision] = useState<'ACCEPT' | 'EDIT' | 'REJECT' | null>(null);
-  const [humanFeedback, setHumanFeedback] = useState<string>('');
-  const [correctedRootCause, setCorrectedRootCause] = useState<string>('');
-  const [correctedOsiLayer, setCorrectedOsiLayer] = useState<string>('Layer 3');
-  const [verificationResult, setVerificationResult] = useState<any>(null);
-  const [datasetProposal, setDatasetProposal] = useState<any>(null);
+  // UI Flow State
+  const [loading, setLoading] = useState(false);
+  const [activeStep, setActiveStep] = useState<number>(1);
+  const [reviewDecision, setReviewDecision] = useState<'ACCEPT' | 'EDIT' | 'REJECT' | null>(null);
+  const [reviewFeedback, setReviewFeedback] = useState('');
+  const [correctedCause, setCorrectedCause] = useState('');
+  const [correctedLayer, setCorrectedLayer] = useState('Layer 3');
+  const [isResolved, setIsResolved] = useState(false);
 
-  // Step 3 Execution: Run Normalization, Rule Checks, Retrieval, Gemini Diagnosis
-  const runDiagnosticPipeline = async () => {
-    if (!problemText.trim()) {
-      setError('Please provide a description of the networking problem.');
-      return;
-    }
+  // 1. Initialize Troubleshooting Session
+  const handleStartSession = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!problemText.trim()) return;
 
-    setError(null);
     setLoading(true);
-    setStep(3);
-
     try {
-      // 1. Upload topology image if present
-      let topologyImagePath = '';
-      if (topologyImage && user) {
-        const fileExt = topologyImage.name.split('.').pop();
-        const fileName = `${user.id}/${Date.now()}.${fileExt}`;
-        const { data: uploadData, error: uploadErr } = await supabase.storage
-          .from('topology_images')
-          .upload(fileName, topologyImage);
-        if (uploadData) topologyImagePath = uploadData.path;
-      }
+      const res = await fetch('http://localhost:8000/api/troubleshoot/start-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: user?.id, problem_text: problemText })
+      });
+      const data = await res.json();
+      setSessionId(data.session_id);
+      setActiveStep(2);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      // 2. Call FastAPI backend diagnosis pipeline endpoint
-      const res = await fetch('/api/troubleshoot/diagnose', {
+  // 2. Submit Logs & Execute Python Rule Engine + Gemini AI
+  const handleSubmitIteration = async () => {
+    if (!sessionId || !currentLogs.trim()) return;
+
+    setLoading(true);
+    try {
+      const res = await fetch('http://localhost:8000/api/troubleshoot/submit-iteration', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          problem_text: problemText,
-          show_output: showOutput,
-          topology_note: topologyNote,
-          user_id: user?.id
+          session_id: sessionId,
+          user_id: user?.id,
+          iteration_number: currentIteration,
+          command: currentCommand,
+          raw_output: currentLogs
+        })
+      });
+      const data = await res.json();
+
+      const newIter: IterationState = {
+        iteration_number: currentIteration,
+        command: currentCommand,
+        raw_output: currentLogs,
+        cleaned_facts: data.cleaned_facts,
+        rule_results: data.rule_results,
+        retrieved_cases: data.retrieved_cases,
+        ai_guidance: data.ai_guidance
+      };
+
+      setIterationsHistory((prev) => [...prev, newIter]);
+      
+      if (data.ai_guidance.status === 'RESOLVED') {
+        setIsResolved(true);
+      }
+      
+      setActiveStep(4);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 3. Submit Human Review Decision (Accept / Edit / Reject)
+  const handleSubmitReview = async (decision: 'ACCEPT' | 'EDIT' | 'REJECT') => {
+    if (!sessionId || iterationsHistory.length === 0) return;
+
+    const currentIterObj = iterationsHistory[iterationsHistory.length - 1];
+
+    try {
+      await fetch('http://localhost:8000/api/troubleshoot/submit-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          iteration_number: currentIteration,
+          ai_response_id: currentIterObj.ai_guidance?.id || 'demo-ai-id',
+          user_id: user?.id,
+          decision,
+          feedback: reviewFeedback,
+          corrected_root_cause: correctedCause,
+          corrected_osi_layer: correctedLayer
         })
       });
 
-      if (!res.ok) {
-        throw new Error(`API Diagnosis failed (${res.status})`);
-      }
+      // Update local iteration record
+      setIterationsHistory((prev) =>
+        prev.map((item, idx) =>
+          idx === prev.length - 1
+            ? { ...item, human_review: { decision, feedback: reviewFeedback, corrected_root_cause: correctedCause, corrected_osi_layer: correctedLayer } }
+            : item
+        )
+      );
 
-      const data = await res.json();
-      setNormalized(data.normalized_problem);
-      setRuleResults(data.rule_results || []);
-      setRelevantCases(data.relevant_cases || []);
-      setDiagnosis(data.diagnosis);
-      setDatasetProposal(data.dataset_correction_proposal);
-
-      // 3. Save Troubleshooting Session to Supabase PostgreSQL
-      if (user) {
-        const { data: sessionData } = await supabase
-          .from('troubleshooting_sessions')
-          .insert({
-            user_id: user.id,
-            problem_text: problemText,
-            normalized_problem: data.normalized_problem,
-            show_output: showOutput,
-            topology_data: topologyNote,
-            topology_image_path: topologyImagePath,
-            status: 'diagnosed'
-          })
-          .select()
-          .single();
-
-        if (sessionData) {
-          setSessionId(sessionData.id);
-
-          // Save rule checker results
-          if (data.rule_results && data.rule_results.length > 0) {
-            const ruleInserts = data.rule_results.map((r: any) => ({
-              session_id: sessionData.id,
-              rule_name: r.rule,
-              status: r.status,
-              result: r.result,
-              evidence: r.evidence,
-              severity: r.severity
-            }));
-            await supabase.from('rule_checker_results').insert(ruleInserts);
-          }
-
-          // Save diagnosis
-          if (data.diagnosis) {
-            await supabase.from('diagnoses').insert({
-              session_id: sessionData.id,
-              user_id: user.id,
-              root_cause: data.diagnosis.root_cause,
-              confidence: data.diagnosis.confidence,
-              osi_layer: data.diagnosis.osi_layer,
-              evidence: data.diagnosis.evidence,
-              next_command: data.diagnosis.next_command,
-              fix_steps: data.diagnosis.fix_steps,
-              alternative_causes: data.diagnosis.alternative_causes,
-              missing_evidence: data.diagnosis.missing_evidence,
-              retrieved_case_ids: data.diagnosis.retrieved_case_ids
-            });
-          }
-        }
-      }
-
-      setLoading(false);
-      setStep(4);
-    } catch (err: any) {
+      setReviewDecision(decision);
+      setActiveStep(6);
+    } catch (err) {
       console.error(err);
-      setError(err.message || 'Error occurred during diagnostic pipeline.');
-      setLoading(false);
     }
   };
 
-  // Step 5 Execution: Human Review Submission (ACCEPT, EDIT, REJECT)
-  const handleHumanReviewSubmit = async () => {
-    if (!humanDecision) {
-      setError('Please select a review decision (ACCEPT, EDIT, or REJECT).');
-      return;
-    }
-
-    if ((humanDecision === 'EDIT' || humanDecision === 'REJECT') && !humanFeedback.trim()) {
-      setError(`Mandatory explanation feedback is required when choosing ${humanDecision}.`);
-      return;
-    }
-
-    setError(null);
-    setLoading(true);
-
-    try {
-      // If EDIT or REJECT, run AI Verification
-      let verification = null;
-      if (humanDecision === 'EDIT' || humanDecision === 'REJECT') {
-        const vRes = await fetch('/api/troubleshoot/verify-feedback', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            problem_text: problemText,
-            original_diagnosis: diagnosis,
-            decision: humanDecision,
-            feedback: humanFeedback,
-            show_output: showOutput,
-            rule_results: ruleResults
-          })
-        });
-
-        if (vRes.ok) {
-          verification = await vRes.json();
-          setVerificationResult(verification);
-        }
-      }
-
-      // Persist Review & Verification to Supabase
-      if (user && sessionId) {
-        // Fetch diagnosis ID
-        const { data: diagFetch } = await supabase
-          .from('diagnoses')
-          .select('id')
-          .eq('session_id', sessionId)
-          .single();
-
-        if (diagFetch) {
-          const { data: revData } = await supabase
-            .from('human_reviews')
-            .insert({
-              diagnosis_id: diagFetch.id,
-              user_id: user.id,
-              decision: humanDecision,
-              feedback: humanFeedback,
-              corrected_root_cause: correctedRootCause || null,
-              corrected_osi_layer: correctedOsiLayer || null
-            })
-            .select()
-            .single();
-
-          if (revData && verification) {
-            await supabase.from('verification_results').insert({
-              review_id: revData.id,
-              original_ai_correct: verification.original_ai_correct,
-              final_diagnosis: verification.final_diagnosis,
-              evidence: verification.evidence,
-              verification_reason: verification.verification_reason,
-              confidence: verification.confidence
-            });
-          }
-
-          // Update session status in Supabase
-          await supabase
-            .from('troubleshooting_sessions')
-            .update({ status: humanDecision.toLowerCase() })
-            .eq('id', sessionId);
-        }
-      }
-
-      setLoading(false);
-      setStep(6);
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Failed to submit review.');
-      setLoading(false);
-    }
+  // 4. Advance to Next Iteration (After applying fix in Packet Tracer)
+  const handleStartNextIteration = () => {
+    setCurrentIteration((prev) => prev + 1);
+    setCurrentLogs('');
+    setReviewDecision(null);
+    setReviewFeedback('');
+    setActiveStep(2);
   };
+
+  const currentIterData = iterationsHistory[iterationsHistory.length - 1];
 
   return (
-    <div className="max-w-6xl mx-auto px-4 lg:px-8 py-10">
-      {/* Wizard Progress Bar Header */}
-      <div className="mb-10">
-        <div className="flex items-center justify-between mb-4">
+    <div className="max-w-6xl mx-auto px-4 lg:px-8 py-10 space-y-8">
+      {/* Page Title & Header */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 lg:p-8 shadow-2xl backdrop-blur-md">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+            <Terminal className="w-6 h-6" />
+          </div>
           <div>
-            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-              <Terminal className="w-6 h-6 text-cyan-400" />
-              Cisco Troubleshooting Wizard
-            </h1>
-            <p className="text-xs text-slate-400 font-mono">
-              6-Step AI + Deterministic Rule Analysis Engine
-            </p>
-          </div>
-
-          <div className="flex items-center gap-1.5 font-mono text-xs text-cyan-400 bg-cyan-500/10 border border-cyan-500/30 px-3 py-1.5 rounded-xl">
-            <Sparkles className="w-3.5 h-3.5" />
-            STEP {step} OF 6
+            <div className="text-xs font-mono uppercase tracking-widest text-cyan-400">Iterative Guided Assistant</div>
+            <h1 className="text-2xl font-bold text-white">Cisco Packet Tracer Guided Troubleshooter</h1>
           </div>
         </div>
-
-        {/* Step Indicator Badges */}
-        <div className="grid grid-cols-6 gap-2">
-          {[
-            { num: 1, label: 'Problem' },
-            { num: 2, label: 'Evidence' },
-            { num: 3, label: 'Analysis' },
-            { num: 4, label: 'Diagnosis' },
-            { num: 5, label: 'Review' },
-            { num: 6, label: 'Verification' }
-          ].map((s) => (
-            <div
-              key={s.num}
-              className={`h-2 rounded-full transition-all ${
-                step >= s.num
-                  ? 'bg-gradient-to-r from-cyan-500 to-blue-500 shadow-md shadow-cyan-500/20'
-                  : 'bg-slate-800'
-              }`}
-              title={`Step ${s.num}: ${s.label}`}
-            />
-          ))}
-        </div>
+        <p className="text-xs text-slate-400 font-mono mt-1">
+          Python Rule Engine verifies CLI logs → 255+ Supabase Cases retrieved → Gemini AI guides Packet Tracer fixes step-by-step.
+        </p>
       </div>
 
-      {error && (
-        <div className="mb-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-sm flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 shrink-0" />
-          <span>{error}</span>
+      {/* Interactive 6-Step Workflow Timeline */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {[
+          { step: 1, title: '1. Problem', desc: 'Describe Issue' },
+          { step: 2, title: '2. CLI Logs', desc: 'Paste Evidence' },
+          { step: 3, title: '3. Python Check', desc: 'Fact & Rules' },
+          { step: 4, title: '4. AI Guidance', desc: 'Step-by-Step' },
+          { step: 5, title: '5. Human Review', desc: 'Accept / Edit' },
+          { step: 6, title: '6. Packet Tracer', desc: 'Apply & Retest' }
+        ].map((s) => (
+          <div
+            key={s.step}
+            className={`p-3 rounded-xl border transition-all text-left ${
+              activeStep === s.step
+                ? 'bg-cyan-500/10 border-cyan-500/50 text-cyan-300 shadow-lg shadow-cyan-500/10'
+                : activeStep > s.step
+                ? 'bg-slate-900/80 border-slate-800 text-slate-300'
+                : 'bg-slate-950/40 border-slate-900 text-slate-600'
+            }`}
+          >
+            <div className="text-xs font-bold font-mono flex items-center justify-between">
+              <span>{s.title}</span>
+              {activeStep > s.step && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+            </div>
+            <div className="text-[10px] text-slate-400 mt-1">{s.desc}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* STEP 1: PROBLEM FORM */}
+      {activeStep === 1 && (
+        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 lg:p-8 space-y-6">
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-cyan-400" />
+            Step 1: Describe the Packet Tracer Problem
+          </h2>
+
+          <form onSubmit={handleStartSession} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">
+                Problem Description / Symptoms
+              </label>
+              <textarea
+                required
+                rows={3}
+                value={problemText}
+                onChange={(e) => setProblemText(e.target.value)}
+                placeholder="e.g. PC1 on VLAN 10 cannot ping Server1 on VLAN 20 across the trunk interface..."
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 font-mono"
+              />
+            </div>
+
+            {/* Template Presets */}
+            <div>
+              <div className="text-xs font-mono uppercase tracking-wider text-slate-400 mb-2">
+                Or Select a Preset Cisco Lab Scenario:
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {PRESET_LOG_TEMPLATES.map((t, idx) => (
+                  <button
+                    type="button"
+                    key={idx}
+                    onClick={() => {
+                      setProblemText(t.problem);
+                      setCurrentCommand(t.command);
+                      setCurrentLogs(t.output);
+                    }}
+                    className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-cyan-500/50 text-left transition-all"
+                  >
+                    <div className="text-xs font-bold text-cyan-300">{t.title}</div>
+                    <div className="text-[11px] text-slate-400 line-clamp-1 mt-1">{t.problem}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-500/25 flex items-center justify-center gap-2 transition-all"
+            >
+              Start Troubleshooting Session <ArrowRight className="w-4 h-4" />
+            </button>
+          </form>
         </div>
       )}
 
-      {/* STEP 1: PROBLEM INPUT */}
-      {step === 1 && (
+      {/* STEP 2: LOG COLLECTION FORM (Iteration N) */}
+      {activeStep === 2 && (
         <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 lg:p-8 space-y-6">
-          <div>
-            <h2 className="text-lg font-bold text-white mb-1">Step 1: Problem Description & Topology</h2>
-            <p className="text-xs text-slate-400">Describe the Cisco network issue or select a preset scenario.</p>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <FileCode className="w-5 h-5 text-blue-400" />
+              Step 2: Submit Cisco CLI Command Output (Iteration {currentIteration})
+            </h2>
+            <span className="px-3 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono">
+              Session ID: {sessionId?.slice(0, 8)}...
+            </span>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">
-              Problem Description *
-            </label>
-            <textarea
-              rows={4}
-              required
-              value={problemText}
-              onChange={(e) => setProblemText(e.target.value)}
-              placeholder="e.g. PC1 in VLAN 10 (192.168.10.10) receives an IP address but cannot communicate with Server1 on VLAN 20 (192.168.20.50). Default gateway 192.168.10.1 responds."
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 font-sans transition-colors"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-4">
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">
-                Topology Description (Optional)
+                Executed Command Name
               </label>
-              <textarea
-                rows={3}
-                value={topologyNote}
-                onChange={(e) => setTopologyNote(e.target.value)}
-                placeholder="e.g. Router-on-a-stick topology connected via switch trunk port Gi0/1."
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition-colors"
+              <input
+                type="text"
+                value={currentCommand}
+                onChange={(e) => setCurrentCommand(e.target.value)}
+                placeholder="show running-config / show ip interface brief / show interfaces trunk"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white font-mono"
               />
             </div>
 
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">
-                Topology Image (Optional)
+                Paste Command Output from Packet Tracer Terminal
               </label>
-              <div className="border-2 border-dashed border-slate-800 hover:border-cyan-500/50 rounded-xl p-4 text-center cursor-pointer transition-colors bg-slate-950">
-                <input
-                  type="file"
-                  accept="image/png, image/jpeg, image/webp"
-                  onChange={(e) => setTopologyImage(e.target.files?.[0] || null)}
-                  className="hidden"
-                  id="topology-upload"
-                />
-                <label htmlFor="topology-upload" className="cursor-pointer flex flex-col items-center gap-1">
-                  <Upload className="w-6 h-6 text-slate-500 mb-1" />
-                  <span className="text-xs text-slate-300 font-medium">
-                    {topologyImage ? topologyImage.name : 'Upload Packet Tracer Screenshot'}
-                  </span>
-                  <span className="text-[10px] text-slate-500">PNG, JPG, WEBP up to 5MB</span>
-                </label>
-              </div>
+              <textarea
+                rows={6}
+                value={currentLogs}
+                onChange={(e) => setCurrentLogs(e.target.value)}
+                placeholder="Paste command output here..."
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs text-cyan-300 font-mono focus:outline-none focus:border-cyan-500"
+              />
             </div>
-          </div>
 
-          <div className="flex justify-end pt-4">
             <button
-              onClick={() => {
-                if (!problemText.trim()) {
-                  setError('Problem description is required.');
-                  return;
-                }
-                setError(null);
-                setStep(2);
-              }}
-              className="px-6 py-3 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-500/25 flex items-center gap-2 transition-all"
+              type="button"
+              onClick={handleSubmitIteration}
+              disabled={loading || !currentLogs.trim()}
+              className="w-full py-3 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 text-white shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
             >
-              Continue to Evidence Input
-              <ArrowRight className="w-4 h-4" />
+              {loading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Running Python Rules & Gemini AI...
+                </>
+              ) : (
+                <>
+                  <Cpu className="w-4 h-4" />
+                  Analyze Evidence & Generate Guidance
+                </>
+              )}
             </button>
           </div>
         </div>
       )}
 
-      {/* STEP 2: EVIDENCE & SHOW COMMAND OUTPUT */}
-      {step === 2 && (
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 lg:p-8 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-bold text-white mb-1">Step 2: Cisco Show Command Evidence</h2>
-              <p className="text-xs text-slate-400">Paste CLI output or load sample networking evidence templates.</p>
-            </div>
-
-            {/* Quick Load Example Templates */}
-            <div className="flex flex-wrap gap-1.5">
-              {Object.keys(EXAMPLE_SHOW_OUTPUTS).map((key) => (
-                <button
-                  key={key}
-                  onClick={() => setShowOutput(EXAMPLE_SHOW_OUTPUTS[key as keyof typeof EXAMPLE_SHOW_OUTPUTS])}
-                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-mono text-cyan-400 border border-slate-700 transition-colors"
-                >
-                  + {key}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2 flex items-center justify-between">
-              <span>Cisco CLI Show Command Output</span>
-              <span className="font-mono text-[10px] text-slate-500">show ip route, show ip int brief, show vlan</span>
-            </label>
-            <textarea
-              rows={10}
-              value={showOutput}
-              onChange={(e) => setShowOutput(e.target.value)}
-              placeholder="R1# show ip interface brief&#10;Gi0/0/0.10  192.168.10.1  YES manual UP  UP&#10;Gi0/0/0.20  unassigned    YES unset  DOWN DOWN"
-              className="w-full bg-[#070a12] border border-slate-800 rounded-xl p-4 text-xs font-mono text-cyan-300 placeholder-slate-600 focus:outline-none focus:border-cyan-500 leading-relaxed transition-colors"
-            />
-          </div>
-
-          <div className="flex items-center justify-between pt-4">
-            <button
-              onClick={() => setStep(1)}
-              className="px-5 py-2.5 rounded-xl font-semibold bg-slate-800 text-slate-300 hover:text-white flex items-center gap-2 transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </button>
-
-            <button
-              onClick={runDiagnosticPipeline}
-              className="px-8 py-3 rounded-xl font-bold bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white shadow-xl shadow-cyan-500/25 flex items-center gap-2 transition-all hover:scale-105"
-            >
-              <Cpu className="w-4 h-4 animate-pulse text-cyan-300" />
-              Execute Diagnostic Pipeline
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 3: ANALYSIS IN PROGRESS */}
-      {step === 3 && (
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-12 text-center space-y-6">
-          <div className="w-16 h-16 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 mx-auto animate-bounce">
-            <Cpu className="w-8 h-8" />
-          </div>
-          <h2 className="text-xl font-bold text-white">Running NetSage AI Pipeline...</h2>
-          <p className="text-xs font-mono text-slate-400 max-w-md mx-auto">
-            Normalizing problem → Executing 6 Deterministic Python Rules → TF-IDF Cosine Retrieval from 30+ Supabase Cases → Gemini AI Evidence Reasoning
-          </p>
-          <div className="w-48 h-1.5 bg-slate-800 rounded-full mx-auto overflow-hidden">
-            <div className="w-full h-full bg-gradient-to-r from-cyan-500 to-blue-500 animate-pulse" />
-          </div>
-        </div>
-      )}
-
-      {/* STEP 4: AI DIAGNOSIS PRESENTATION */}
-      {step === 4 && diagnosis && (
-        <div className="space-y-8">
-          {/* Main Diagnosis Card */}
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 lg:p-8 shadow-2xl space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-6">
+      {/* STEP 4 & 5: GUIDANCE & HUMAN REVIEW (Iteration N) */}
+      {(activeStep === 4 || activeStep === 5 || activeStep === 6) && currentIterData && (
+        <div className="space-y-6">
+          {/* AI Guidance Box */}
+          <div className="bg-slate-900/90 border border-cyan-500/30 rounded-2xl p-6 lg:p-8 space-y-6 shadow-2xl">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
               <div>
-                <span className="text-[11px] font-mono uppercase tracking-widest text-cyan-400">
-                  AI Root Cause Diagnosis
+                <span className="text-xs font-mono uppercase tracking-widest text-cyan-400 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-cyan-400" />
+                  Iteration {currentIterData.iteration_number} — NetSage AI Guidance
                 </span>
-                <h2 className="text-2xl font-bold text-white mt-1">{diagnosis.root_cause}</h2>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <span className="px-3 py-1 rounded-xl bg-blue-500/20 text-blue-300 font-mono text-xs border border-blue-500/30 font-semibold">
-                  {diagnosis.osi_layer}
-                </span>
-
-                <span
-                  className={`px-3 py-1 rounded-xl font-mono text-xs border font-bold ${
-                    diagnosis.confidence === 'High'
-                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                      : diagnosis.confidence === 'Medium'
-                      ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-                      : 'bg-rose-500/20 text-rose-400 border-rose-500/30'
-                  }`}
-                >
-                  Confidence: {diagnosis.confidence}
-                </span>
-              </div>
-            </div>
-
-            {/* Rule Checker Results Table */}
-            <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 mb-3 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                Deterministic Python Rule Engine Results (6 Checks)
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 font-mono text-xs">
-                {ruleResults.map((r: any, idx: number) => (
-                  <div
-                    key={idx}
-                    className={`p-3 rounded-xl border flex items-start justify-between ${
-                      r.status === 'FAIL'
-                        ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-                        : 'bg-slate-950/60 border-slate-800 text-slate-300'
-                    }`}
-                  >
-                    <div>
-                      <div className="font-bold">{r.rule}</div>
-                      <div className="text-[11px] opacity-80 mt-0.5">{r.result}</div>
-                    </div>
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        r.status === 'FAIL'
-                          ? 'bg-rose-500 text-white'
-                          : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                      }`}
-                    >
-                      {r.status}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Next Cisco Command Terminal Block */}
-            {diagnosis.next_command && (
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2 flex items-center gap-2">
-                  <Terminal className="w-4 h-4 text-cyan-400" />
-                  Recommended Next Cisco CLI Command
+                <h3 className="text-xl font-bold text-white mt-1">
+                  {currentIterData.ai_guidance?.what_i_found || 'Diagnostic Guidance Ready'}
                 </h3>
-                <div className="bg-[#070a12] border border-cyan-500/30 rounded-xl p-4 font-mono text-sm text-cyan-400 shadow-inner flex items-center justify-between">
-                  <code>{diagnosis.next_command}</code>
-                  <span className="text-[10px] text-slate-500">Run in Packet Tracer CLI</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-mono font-bold">
+                  {currentIterData.ai_guidance?.osi_layer || 'Layer 3'}
+                </span>
+                <span className="px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold">
+                  {currentIterData.ai_guidance?.confidence || 'High'} Confidence
+                </span>
+              </div>
+            </div>
+
+            {/* Beginner Explanation */}
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+              <div className="text-xs font-mono uppercase tracking-wider text-slate-400 font-bold">
+                1. What I Found:
+              </div>
+              <p className="text-sm text-slate-200 leading-relaxed font-sans">
+                {currentIterData.ai_guidance?.what_i_found}
+              </p>
+            </div>
+
+            {/* Evidence & Python Rules Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Evidence Points */}
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <div className="text-xs font-mono uppercase tracking-wider text-slate-400 font-bold">
+                  2. Evidence Points:
+                </div>
+                <ul className="text-xs text-slate-300 space-y-1.5 list-disc list-inside font-mono">
+                  {currentIterData.ai_guidance?.evidence?.map((ev: string, idx: number) => (
+                    <li key={idx}>{ev}</li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Python Deterministic Rule Results */}
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <div className="text-xs font-mono uppercase tracking-wider text-slate-400 font-bold flex items-center justify-between">
+                  <span>3. Python Rule Checker Results:</span>
+                  <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+                </div>
+                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                  {currentIterData.rule_results?.map((r: any, idx: number) => (
+                    <div key={idx} className="flex items-center justify-between text-xs font-mono py-1 border-b border-slate-900">
+                      <span className="text-slate-300 truncate max-w-[180px]">{r.rule_name}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-500">{r.severity}</span>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          r.status === 'PASS' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
+                        }`}>
+                          {r.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            )}
+            </div>
 
-            {/* Fix Steps & Evidence Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 mb-3">
-                  Actionable Fix Steps
-                </h3>
-                <ol className="space-y-2 text-xs text-slate-300 list-decimal list-inside bg-slate-950 p-4 rounded-xl border border-slate-800">
-                  {diagnosis.fix_steps?.map((step: string, i: number) => (
-                    <li key={i} className="leading-relaxed">{step}</li>
-                  ))}
-                </ol>
+            {/* Recommended Next Action & Packet Tracer Fix Steps */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Next CLI Command to Run */}
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <div className="text-xs font-mono uppercase tracking-wider text-cyan-400 font-bold flex items-center gap-1.5">
+                  <Terminal className="w-4 h-4" /> Next Command to Run:
+                </div>
+                <div className="bg-slate-900 px-3 py-2 rounded-lg text-sm text-cyan-300 font-mono border border-slate-800">
+                  {currentIterData.ai_guidance?.next_command}
+                </div>
+                <p className="text-xs text-slate-400 font-sans">
+                  {currentIterData.ai_guidance?.why_this_command}
+                </p>
               </div>
 
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 mb-3">
-                  Supporting CLI Evidence
-                </h3>
-                <ul className="space-y-2 text-xs text-slate-300 bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono">
-                  {diagnosis.evidence?.map((ev: string, i: number) => (
-                    <li key={i} className="flex items-start gap-2 text-cyan-300">
-                      <span className="text-cyan-500">•</span>
-                      <span>{ev}</span>
+              {/* Packet Tracer Fix Steps */}
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <div className="text-xs font-mono uppercase tracking-wider text-emerald-400 font-bold flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4" /> Recommended Packet Tracer Fix:
+                </div>
+                <ul className="text-xs text-slate-300 space-y-1 font-mono">
+                  {currentIterData.ai_guidance?.fix_steps?.map((step: string, idx: number) => (
+                    <li key={idx} className="bg-slate-900 px-2.5 py-1.5 rounded border border-slate-800 text-emerald-300">
+                      {step}
                     </li>
                   ))}
                 </ul>
               </div>
             </div>
 
-            {/* Retrieved Supabase Cases Context */}
-            {relevantCases.length > 0 && (
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2 flex items-center gap-2">
-                  <Database className="w-4 h-4 text-blue-400" />
-                  Retrieved Supabase Knowledge Base Reference Cases (TF-IDF Cosine Similarity)
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {relevantCases.slice(0, 3).map((c: any, idx: number) => (
-                    <div key={idx} className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-xs">
-                      <div className="flex items-center justify-between mb-1 font-mono text-[10px] text-blue-400">
-                        <span>{c.case_id}</span>
-                        <span>Score: {c.similarity_score}</span>
-                      </div>
-                      <div className="font-semibold text-slate-200 line-clamp-1">{c.title}</div>
-                      <div className="text-[11px] text-slate-400 mt-1 line-clamp-2">{c.symptom}</div>
-                    </div>
-                  ))}
+            {/* MANDATORY HUMAN REVIEW SECTION (Step 5) */}
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-mono uppercase tracking-wider text-slate-300 font-bold flex items-center gap-2">
+                  <Edit3 className="w-4 h-4 text-amber-400" />
+                  Mandatory Human Review (Step 5)
                 </div>
-              </div>
-            )}
-          </div>
-
-          <div className="flex justify-end">
-            <button
-              onClick={() => setStep(5)}
-              className="px-8 py-3 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-xl shadow-cyan-500/25 flex items-center gap-2 transition-all hover:scale-105"
-            >
-              Proceed to Mandatory Human Review
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 5: MANDATORY HUMAN REVIEW */}
-      {step === 5 && (
-        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 lg:p-8 space-y-6 shadow-2xl">
-          <div>
-            <h2 className="text-xl font-bold text-white mb-1">Step 5: Mandatory Human Review</h2>
-            <p className="text-xs text-slate-400">
-              Select ACCEPT, EDIT, or REJECT. Section 23 of PS requires mandatory feedback explanation for EDIT and REJECT decisions.
-            </p>
-          </div>
-
-          {/* Decision Buttons */}
-          <div className="grid grid-cols-3 gap-4">
-            <button
-              type="button"
-              onClick={() => setHumanDecision('ACCEPT')}
-              className={`p-4 rounded-xl border font-bold text-sm flex flex-col items-center justify-center gap-2 transition-all ${
-                humanDecision === 'ACCEPT'
-                  ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400 shadow-lg shadow-emerald-500/20 ring-2 ring-emerald-500'
-                  : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-emerald-500/50'
-              }`}
-            >
-              <CheckCircle2 className="w-6 h-6 text-emerald-400" />
-              [ ACCEPT ]
-              <span className="text-[10px] font-normal text-slate-400">AI Diagnosis is Accurate</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setHumanDecision('EDIT')}
-              className={`p-4 rounded-xl border font-bold text-sm flex flex-col items-center justify-center gap-2 transition-all ${
-                humanDecision === 'EDIT'
-                  ? 'bg-amber-500/20 border-amber-500 text-amber-400 shadow-lg shadow-amber-500/20 ring-2 ring-amber-500'
-                  : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-amber-500/50'
-              }`}
-            >
-              <Edit3 className="w-6 h-6 text-amber-400" />
-              [ EDIT ]
-              <span className="text-[10px] font-normal text-slate-400">Modify Root Cause & Feedback</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setHumanDecision('REJECT')}
-              className={`p-4 rounded-xl border font-bold text-sm flex flex-col items-center justify-center gap-2 transition-all ${
-                humanDecision === 'REJECT'
-                  ? 'bg-rose-500/20 border-rose-500 text-rose-400 shadow-lg shadow-rose-500/20 ring-2 ring-rose-500'
-                  : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-rose-500/50'
-              }`}
-            >
-              <XCircle className="w-6 h-6 text-rose-400" />
-              [ REJECT ]
-              <span className="text-[10px] font-normal text-slate-400">AI Diagnosis is Inaccurate</span>
-            </button>
-          </div>
-
-          {/* Mandatory Feedback Form for EDIT and REJECT */}
-          {(humanDecision === 'EDIT' || humanDecision === 'REJECT') && (
-            <div className="p-6 rounded-xl bg-slate-950 border border-amber-500/30 space-y-4">
-              <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
-                <AlertTriangle className="w-4 h-4" />
-                <span>Mandatory Feedback Explanation Required</span>
+                {reviewDecision && (
+                  <span className="px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-mono font-bold">
+                    Reviewed: {reviewDecision}
+                  </span>
+                )}
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-2">
-                  Human Explanation Feedback *
-                </label>
-                <textarea
-                  rows={3}
-                  required
-                  value={humanFeedback}
-                  onChange={(e) => setHumanFeedback(e.target.value)}
-                  placeholder="e.g. The AI identified routing as the problem, but the actual issue is an ACL blocking traffic from VLAN 10 to VLAN 20."
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500"
-                />
-              </div>
+              {!reviewDecision ? (
+                <div className="space-y-4">
+                  <p className="text-xs text-slate-400 font-sans">
+                    As part of the Responsible AI workflow, verify the AI guidance before applying configuration in Packet Tracer:
+                  </p>
 
-              {humanDecision === 'EDIT' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Corrected Root Cause
-                    </label>
-                    <input
-                      type="text"
-                      value={correctedRootCause}
-                      onChange={(e) => setCorrectedRootCause(e.target.value)}
-                      placeholder="e.g. ACL Extended 101 Blocking Port 80"
-                      className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-amber-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Corrected OSI Layer
-                    </label>
-                    <select
-                      value={correctedOsiLayer}
-                      onChange={(e) => setCorrectedOsiLayer(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-amber-500"
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => handleSubmitReview('ACCEPT')}
+                      className="px-5 py-2.5 rounded-xl font-bold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs flex items-center gap-1.5 transition-all"
                     >
-                      <option value="Layer 1">Layer 1 — Physical</option>
-                      <option value="Layer 2">Layer 2 — Data Link</option>
-                      <option value="Layer 3">Layer 3 — Network</option>
-                      <option value="Layer 4">Layer 4 — Transport</option>
-                      <option value="Layer 7">Layer 7 — Application</option>
-                    </select>
+                      <CheckCircle2 className="w-4 h-4" /> Accept Guidance
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReviewDecision('EDIT')}
+                      className="px-5 py-2.5 rounded-xl font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs flex items-center gap-1.5 transition-all"
+                    >
+                      <Edit3 className="w-4 h-4" /> Edit Diagnosis
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReviewDecision('REJECT')}
+                      className="px-5 py-2.5 rounded-xl font-bold bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs flex items-center gap-1.5 transition-all"
+                    >
+                      <XCircle className="w-4 h-4" /> Reject Guidance
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {(reviewDecision === 'EDIT' || reviewDecision === 'REJECT') && (
+                    <div className="space-y-3 bg-slate-900 p-4 rounded-xl border border-slate-800">
+                      <div>
+                        <label className="block text-xs text-slate-300 mb-1 font-mono">Feedback Explanation</label>
+                        <input
+                          type="text"
+                          value={reviewFeedback}
+                          onChange={(e) => setReviewFeedback(e.target.value)}
+                          placeholder="Explain why guidance requires modification..."
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Step 6: Packet Tracer Fix & Re-test */}
+                  <div className="bg-slate-900 border border-cyan-500/30 rounded-xl p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-mono uppercase tracking-wider text-cyan-400 font-bold flex items-center gap-2">
+                        <Terminal className="w-4 h-4" />
+                        Step 6: Apply Fix in Packet Tracer & Submit Verification Evidence
+                      </div>
+                    </div>
+
+                    <div className="text-xs text-slate-300 font-sans space-y-2">
+                      <p>1. Open Packet Tracer and apply the recommended fix configuration.</p>
+                      <p>2. Execute the verification command: <code className="text-cyan-300 bg-slate-950 px-2 py-0.5 rounded font-mono">{currentIterData.ai_guidance?.next_command}</code></p>
+                      <p>3. Click below to paste your NEW CLI output for Iteration {currentIteration + 1} verification.</p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleStartNextIteration}
+                      className="px-6 py-3 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 text-white shadow-lg text-xs flex items-center gap-2 transition-all"
+                    >
+                      <Send className="w-4 h-4" />
+                      Submit New Output for Iteration {currentIteration + 1} Retest
+                    </button>
                   </div>
                 </div>
               )}
             </div>
-          )}
-
-          <div className="flex items-center justify-between pt-4">
-            <button
-              onClick={() => setStep(4)}
-              className="px-5 py-2.5 rounded-xl font-semibold bg-slate-800 text-slate-300 hover:text-white"
-            >
-              Back to Diagnosis
-            </button>
-
-            <button
-              onClick={handleHumanReviewSubmit}
-              disabled={loading || !humanDecision}
-              className="px-8 py-3 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-xl shadow-cyan-500/25 flex items-center gap-2 transition-all disabled:opacity-50"
-            >
-              {loading ? 'Verifying Review...' : 'Submit Review & Verify'}
-              <ArrowRight className="w-4 h-4" />
-            </button>
           </div>
         </div>
       )}
 
-      {/* STEP 6: VERIFICATION & FINAL RESULT */}
-      {step === 6 && (
-        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 lg:p-8 space-y-6 shadow-2xl">
-          <div className="text-center pb-4 border-b border-slate-800">
-            <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mx-auto mb-2">
-              <CheckCircle2 className="w-6 h-6" />
-            </div>
-            <h2 className="text-2xl font-bold text-white">Troubleshooting Session Complete</h2>
-            <p className="text-xs text-slate-400 font-mono mt-1">Saved persistently in Supabase Database</p>
-          </div>
+      {/* Complete Iteration History Timeline */}
+      {iterationsHistory.length > 0 && (
+        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 lg:p-8 space-y-4">
+          <h3 className="text-base font-bold text-white flex items-center gap-2">
+            <Activity className="w-5 h-5 text-cyan-400" />
+            Session Troubleshooting History ({iterationsHistory.length} Iterations)
+          </h3>
 
-          {/* Human Decision Badge */}
-          <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-            <div className="text-xs">
-              <span className="text-slate-400">Human Decision: </span>
-              <span
-                className={`font-mono font-bold px-2 py-0.5 rounded text-xs ml-2 ${
-                  humanDecision === 'ACCEPT'
-                    ? 'bg-emerald-500/20 text-emerald-400'
-                    : humanDecision === 'EDIT'
-                    ? 'bg-amber-500/20 text-amber-400'
-                    : 'bg-rose-500/20 text-rose-400'
-                }`}
-              >
-                {humanDecision}
-              </span>
-            </div>
-
-            {humanFeedback && (
-              <div className="text-xs text-slate-300 font-mono italic max-w-md truncate">
-                "{humanFeedback}"
+          <div className="space-y-3 font-mono">
+            {iterationsHistory.map((item, idx) => (
+              <div key={idx} className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-cyan-400 font-bold">Iteration {item.iteration_number}</span>
+                  <span className="text-slate-500">Command: {item.command}</span>
+                </div>
+                <div className="text-xs text-slate-300 line-clamp-2">{item.ai_guidance?.what_i_found}</div>
               </div>
-            )}
-          </div>
-
-          {/* AI Verification Results Box (If EDIT or REJECT) */}
-          {verificationResult && (
-            <div className="p-6 rounded-xl bg-slate-950 border border-cyan-500/30 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4" />
-                  AI Verification Engine Result
-                </span>
-                <span className="text-[11px] font-mono text-slate-400">
-                  Original AI Correct: {verificationResult.original_ai_correct ? 'Yes' : 'No'}
-                </span>
-              </div>
-
-              <div className="text-sm font-bold text-white">{verificationResult.final_diagnosis}</div>
-              <p className="text-xs text-slate-300 leading-relaxed font-sans">{verificationResult.verification_reason}</p>
-            </div>
-          )}
-
-          {/* Dataset Inconsistency Notice (If AI detected wrong dataset case) */}
-          {datasetProposal && (
-            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs space-y-2">
-              <div className="font-bold flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-400" />
-                <span>Dataset Error Correction Proposal Generated ({datasetProposal.case_id})</span>
-              </div>
-              <p className="text-slate-300">
-                Gemini detected potential inconsistency in case <code className="font-mono text-amber-300">{datasetProposal.case_id}</code>. A correction proposal has been submitted to the Admin Panel for review.
-              </p>
-            </div>
-          )}
-
-          <div className="flex justify-center gap-4 pt-4">
-            <button
-              onClick={() => {
-                setStep(1);
-                setProblemText('');
-                setShowOutput('');
-                setHumanDecision(null);
-                setHumanFeedback('');
-                setDiagnosis(null);
-              }}
-              className="px-6 py-3 rounded-xl font-bold bg-slate-800 hover:bg-slate-700 text-white transition-colors"
-            >
-              Start New Troubleshooting Session
-            </button>
-
-            <button
-              onClick={() => navigate('/history')}
-              className="px-6 py-3 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg shadow-cyan-500/20 transition-all hover:scale-105"
-            >
-              View Session History
-            </button>
+            ))}
           </div>
         </div>
       )}

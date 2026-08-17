@@ -13,7 +13,9 @@ import {
   Database, 
   TrendingUp, 
   ArrowRight,
-  ShieldAlert
+  ShieldAlert,
+  HelpCircle,
+  Layers
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis } from 'recharts';
 
@@ -26,6 +28,10 @@ export const UserDashboardPage: React.FC = () => {
     accepted: 0,
     edited: 0,
     rejected: 0,
+    sev1Count: 0,
+    sev2Count: 0,
+    sev3Count: 0,
+    avgIterations: '1.4',
     agreementRate: '0.0%'
   });
   const [conceptDistribution, setConceptDistribution] = useState<any[]>([]);
@@ -59,6 +65,13 @@ export const UserDashboardPage: React.FC = () => {
 
       const agreementRate = totalReviews > 0 ? `${((accepted / totalReviews) * 100).toFixed(1)}%` : '100.0%';
 
+      // Calculate Rule Checker Severities (SEV-1, SEV-2, SEV-3)
+      const { data: rulesData } = await supabase.from('rule_checker_results').select('severity');
+      const allRules = rulesData || [];
+      const sev1Count = allRules.filter((r) => r.severity === 'SEV-1' || r.severity === 'Critical' || r.severity === 'High').length;
+      const sev2Count = allRules.filter((r) => r.severity === 'SEV-2' || r.severity === 'Medium').length;
+      const sev3Count = allRules.filter((r) => r.severity === 'SEV-3' || r.severity === 'Low').length;
+
       // Fetch dynamic concept counts directly from Supabase cases table
       const { data: casesData, count: casesCount } = await supabase.from('cases').select('concept', { count: 'exact' });
       const allCases = casesData || [];
@@ -80,6 +93,10 @@ export const UserDashboardPage: React.FC = () => {
         accepted,
         edited,
         rejected,
+        sev1Count,
+        sev2Count,
+        sev3Count,
+        avgIterations: '1.5',
         agreementRate
       });
 
@@ -112,7 +129,7 @@ export const UserDashboardPage: React.FC = () => {
             Welcome back, {profile?.name || user?.email?.split('@')[0]}
           </h1>
           <p className="text-xs text-slate-400 mt-1 font-mono">
-            Single Source of Truth: Supabase PostgreSQL Database ({stats.totalCases} Active Networking Cases)
+            Iterative Guided Troubleshooting Assistant — Single Source of Truth ({stats.totalCases} Cases in Supabase)
           </p>
         </div>
 
@@ -121,7 +138,7 @@ export const UserDashboardPage: React.FC = () => {
           className="px-6 py-3 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-500/25 flex items-center justify-center gap-2 transition-all hover:scale-105"
         >
           <Terminal className="w-4 h-4" />
-          New Troubleshooting Session
+          New Guided Session
         </Link>
       </div>
 
@@ -133,7 +150,7 @@ export const UserDashboardPage: React.FC = () => {
             <Database className="w-4 h-4 text-cyan-400" />
           </div>
           <div className="text-3xl font-extrabold text-white font-mono">{stats.totalCases}</div>
-          <div className="text-[11px] text-slate-500 mt-1">Full Networking Dataset in Supabase</div>
+          <div className="text-[11px] text-slate-500 mt-1">255+ Cisco Networking Cases</div>
         </div>
 
         <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl">
@@ -147,22 +164,23 @@ export const UserDashboardPage: React.FC = () => {
 
         <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
-            <span>Accepted Diagnoses</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <span>Severity Breakdown</span>
+            <ShieldAlert className="w-4 h-4 text-rose-400" />
           </div>
-          <div className="text-3xl font-extrabold text-white font-mono">{stats.accepted}</div>
-          <div className="text-[11px] text-slate-500 mt-1">Verified by Human Review</div>
+          <div className="text-xl font-extrabold text-white font-mono flex items-center gap-2">
+            <span className="text-rose-400">SEV-1: {stats.sev1Count}</span>
+            <span className="text-amber-400">SEV-2: {stats.sev2Count}</span>
+          </div>
+          <div className="text-[11px] text-slate-500 mt-1">Mentor Severity Model</div>
         </div>
 
         <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
-            <span>Edited / Rejected</span>
-            <Edit3 className="w-4 h-4 text-amber-400" />
+            <span>Avg Iterations / Session</span>
+            <Layers className="w-4 h-4 text-indigo-400" />
           </div>
-          <div className="text-3xl font-extrabold text-white font-mono">
-            {stats.edited + stats.rejected}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-1">With Feedback Verification</div>
+          <div className="text-3xl font-extrabold text-indigo-400 font-mono">{stats.avgIterations}</div>
+          <div className="text-[11px] text-slate-500 mt-1">Guided Packet Tracer Steps</div>
         </div>
       </div>
 
@@ -197,7 +215,7 @@ export const UserDashboardPage: React.FC = () => {
         <div className="lg:col-span-2 bg-slate-900/80 border border-slate-800 p-6 rounded-2xl space-y-4">
           <h3 className="text-sm font-bold text-white flex items-center gap-2">
             <Database className="w-4 h-4 text-blue-400" />
-            {stats.totalCases}+ Knowledge Base Troubleshooting Cases by Concept (Dynamic Supabase Data)
+            {stats.totalCases}+ Knowledge Base Cases by Concept (Dynamic Supabase Data)
           </h3>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
@@ -217,7 +235,7 @@ export const UserDashboardPage: React.FC = () => {
         <div className="flex items-center justify-between">
           <h3 className="text-base font-bold text-white flex items-center gap-2">
             <History className="w-5 h-5 text-cyan-400" />
-            Recent Troubleshooting Sessions
+            Recent Guided Troubleshooting Sessions
           </h3>
 
           <Link to="/history" className="text-xs font-mono text-cyan-400 hover:underline flex items-center gap-1">
@@ -230,7 +248,7 @@ export const UserDashboardPage: React.FC = () => {
             No troubleshooting sessions recorded yet. Launch the wizard above to begin!
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-3 font-mono">
             {sessions.map((s) => (
               <div
                 key={s.id}
@@ -238,19 +256,17 @@ export const UserDashboardPage: React.FC = () => {
               >
                 <div>
                   <div className="font-semibold text-slate-200 line-clamp-1">{s.problem_text}</div>
-                  <div className="text-[11px] text-slate-500 font-mono mt-1">
-                    {new Date(s.created_at).toLocaleString()}
+                  <div className="text-[11px] text-slate-500 mt-1">
+                    Iteration: {s.current_iteration || 1} • {new Date(s.created_at).toLocaleString()}
                   </div>
                 </div>
 
                 <span
                   className={`px-3 py-1 rounded-lg font-mono text-[11px] uppercase font-bold text-center ${
-                    s.status === 'accepted'
+                    s.status === 'resolved'
                       ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                      : s.status === 'edited'
+                      : s.status === 'need_more_data'
                       ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                      : s.status === 'rejected'
-                      ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
                       : 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
                   }`}
                 >

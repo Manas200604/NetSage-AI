@@ -13,7 +13,7 @@ def test_check_duplicate_ip():
     res = RuleChecker.check_duplicate_ip(show_output)
     assert res["status"] == "FAIL"
     assert "Duplicate IP address conflict" in res["result"]
-    assert res["severity"] == "Critical"
+    assert res["severity"] in ["SEV-1", "Critical"]
 
 def test_check_wrong_subnet_mask():
     show_output = "R1# show interface gi0/0\nInternet address is 192.168.50.1/28\nClient is /24"

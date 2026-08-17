@@ -1,4 +1,4 @@
--- NETSAGE AI DATABASE SCHEMA FOR SUPABASE POSTGRESQL
+-- NETSAGE AI DATABASE SCHEMA FOR SUPABASE POSTGRESQL (ITERATIVE GUIDED TROUBLESHOOTING)
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 2. CASES TABLE (Troubleshooting Knowledge Base)
+-- 2. CASES TABLE (255+ Troubleshooting Knowledge Base)
 CREATE TABLE IF NOT EXISTS public.cases (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     case_id TEXT UNIQUE NOT NULL,
@@ -32,54 +32,72 @@ CREATE TABLE IF NOT EXISTS public.cases (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 3. TROUBLESHOOTING SESSIONS TABLE
+-- 3. TROUBLESHOOTING SESSIONS TABLE (Multi-Iteration Session Tracker)
 CREATE TABLE IF NOT EXISTS public.troubleshooting_sessions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     problem_text TEXT NOT NULL,
     normalized_problem JSONB,
-    show_output TEXT,
-    topology_data TEXT,
-    topology_image_path TEXT,
-    status TEXT NOT NULL DEFAULT 'in_progress' CHECK (status IN ('in_progress', 'diagnosed', 'accepted', 'edited', 'rejected', 'completed')),
+    current_iteration INT NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'in_progress' CHECK (status IN ('in_progress', 'need_more_data', 'fix_recommended', 'ready_for_verification', 'resolved', 'unresolved')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 4. RULE CHECKER RESULTS TABLE
+-- 4. TROUBLESHOOTING LOGS TABLE (Stores CLI Command Outputs Per Iteration)
+CREATE TABLE IF NOT EXISTS public.troubleshooting_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id UUID NOT NULL REFERENCES public.troubleshooting_sessions(id) ON DELETE CASCADE,
+    iteration_number INT NOT NULL DEFAULT 1,
+    device_name TEXT DEFAULT 'Router/Switch',
+    command TEXT,
+    raw_output TEXT NOT NULL,
+    cleaned_output TEXT,
+    structured_facts JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 5. RULE CHECKER RESULTS TABLE (Python Deterministic Rule Findings Per Iteration)
 CREATE TABLE IF NOT EXISTS public.rule_checker_results (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     session_id UUID NOT NULL REFERENCES public.troubleshooting_sessions(id) ON DELETE CASCADE,
+    log_id UUID REFERENCES public.troubleshooting_logs(id) ON DELETE CASCADE,
+    iteration_number INT NOT NULL DEFAULT 1,
     rule_name TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('PASS', 'FAIL', 'WARN')),
-    result TEXT NOT NULL,
+    finding TEXT NOT NULL,
     evidence TEXT,
-    severity TEXT NOT NULL CHECK (severity IN ('Low', 'Medium', 'High', 'Critical')),
+    severity TEXT NOT NULL DEFAULT 'SEV-2' CHECK (severity IN ('SEV-1', 'SEV-2', 'SEV-3', 'Low', 'Medium', 'High', 'Critical')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 5. DIAGNOSES TABLE
-CREATE TABLE IF NOT EXISTS public.diagnoses (
+-- 6. AI RESPONSES TABLE (Guided Gemini Responses Per Iteration)
+CREATE TABLE IF NOT EXISTS public.ai_responses (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     session_id UUID NOT NULL REFERENCES public.troubleshooting_sessions(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-    root_cause TEXT NOT NULL,
-    confidence TEXT NOT NULL CHECK (confidence IN ('High', 'Medium', 'Low')),
-    osi_layer TEXT NOT NULL,
+    iteration_number INT NOT NULL DEFAULT 1,
+    prompt_context JSONB DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL DEFAULT 'FIX_RECOMMENDED',
+    root_cause TEXT,
+    osi_layer TEXT NOT NULL DEFAULT 'Layer 3',
+    confidence TEXT NOT NULL DEFAULT 'High' CHECK (confidence IN ('High', 'Medium', 'Low')),
     evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+    what_i_found TEXT NOT NULL,
     next_command TEXT NOT NULL,
+    why_this_command TEXT,
+    expected_output TEXT,
     fix_steps JSONB NOT NULL DEFAULT '[]'::jsonb,
-    alternative_causes JSONB DEFAULT '[]'::jsonb,
-    missing_evidence JSONB DEFAULT '[]'::jsonb,
-    retrieved_case_ids JSONB DEFAULT '[]'::jsonb,
-    model TEXT DEFAULT 'gemini-2.5-flash',
+    test_steps JSONB DEFAULT '[]'::jsonb,
+    what_to_submit_next TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 6. HUMAN REVIEWS TABLE
+-- 7. HUMAN REVIEWS TABLE (Mandatory Review Per Iteration)
 CREATE TABLE IF NOT EXISTS public.human_reviews (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    diagnosis_id UUID NOT NULL REFERENCES public.diagnoses(id) ON DELETE CASCADE,
+    session_id UUID NOT NULL REFERENCES public.troubleshooting_sessions(id) ON DELETE CASCADE,
+    iteration_number INT NOT NULL DEFAULT 1,
+    ai_response_id UUID REFERENCES public.ai_responses(id) ON DELETE CASCADE,
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     decision TEXT NOT NULL CHECK (decision IN ('ACCEPT', 'EDIT', 'REJECT')),
     feedback TEXT,
@@ -88,19 +106,18 @@ CREATE TABLE IF NOT EXISTS public.human_reviews (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 7. VERIFICATION RESULTS TABLE
+-- 8. VERIFICATION RESULTS TABLE (Packet Tracer Re-Test Verification)
 CREATE TABLE IF NOT EXISTS public.verification_results (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    review_id UUID NOT NULL REFERENCES public.human_reviews(id) ON DELETE CASCADE,
-    original_ai_correct BOOLEAN NOT NULL,
-    final_diagnosis TEXT NOT NULL,
+    session_id UUID NOT NULL REFERENCES public.troubleshooting_sessions(id) ON DELETE CASCADE,
+    iteration_number INT NOT NULL DEFAULT 1,
+    test_result TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('RESOLVED', 'UNRESOLVED')),
     evidence JSONB DEFAULT '[]'::jsonb,
-    verification_reason TEXT NOT NULL,
-    confidence TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 8. DATASET CORRECTIONS TABLE
+-- 9. DATASET CORRECTIONS TABLE
 CREATE TABLE IF NOT EXISTS public.dataset_corrections (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     case_id TEXT NOT NULL,
@@ -116,7 +133,7 @@ CREATE TABLE IF NOT EXISTS public.dataset_corrections (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 9. AUDIT LOGS TABLE
+-- 10. AUDIT LOGS TABLE
 CREATE TABLE IF NOT EXISTS public.audit_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES auth.users(id),
@@ -132,8 +149,9 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.troubleshooting_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.troubleshooting_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.rule_checker_results ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.diagnoses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.ai_responses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.human_reviews ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.verification_results ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.dataset_corrections ENABLE ROW LEVEL SECURITY;
@@ -168,7 +186,7 @@ CREATE POLICY "Admins delete cases"
     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 );
 
--- 3. Troubleshooting Sessions RLS (Strict User Isolation)
+-- 3. Troubleshooting Sessions RLS (User Isolation)
 CREATE POLICY "Users view own sessions or admins view all" 
   ON public.troubleshooting_sessions FOR SELECT USING (
     auth.uid() = user_id OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
@@ -180,8 +198,22 @@ CREATE POLICY "Users insert own sessions"
 CREATE POLICY "Users update own sessions" 
   ON public.troubleshooting_sessions FOR UPDATE USING (auth.uid() = user_id);
 
--- 4. Rule Checker Results RLS
-CREATE POLICY "Users view own session rule results" 
+-- 4. Troubleshooting Logs RLS
+CREATE POLICY "Users view session logs" 
+  ON public.troubleshooting_logs FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.troubleshooting_sessions s 
+      WHERE s.id = session_id AND (s.user_id = auth.uid() OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'))
+    )
+);
+
+CREATE POLICY "Insert session logs" 
+  ON public.troubleshooting_logs FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM public.troubleshooting_sessions s WHERE s.id = session_id AND s.user_id = auth.uid())
+);
+
+-- 5. Rule Checker Results RLS
+CREATE POLICY "Users view session rule results" 
   ON public.rule_checker_results FOR SELECT USING (
     EXISTS (
       SELECT 1 FROM public.troubleshooting_sessions s 
@@ -194,16 +226,21 @@ CREATE POLICY "Insert rule results"
     EXISTS (SELECT 1 FROM public.troubleshooting_sessions s WHERE s.id = session_id AND s.user_id = auth.uid())
 );
 
--- 5. Diagnoses RLS
-CREATE POLICY "Users view own session diagnoses" 
-  ON public.diagnoses FOR SELECT USING (
-    auth.uid() = user_id OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+-- 6. AI Responses RLS
+CREATE POLICY "Users view session AI responses" 
+  ON public.ai_responses FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.troubleshooting_sessions s 
+      WHERE s.id = session_id AND (s.user_id = auth.uid() OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'))
+    )
 );
 
-CREATE POLICY "Users insert own diagnoses" 
-  ON public.diagnoses FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Insert AI responses" 
+  ON public.ai_responses FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM public.troubleshooting_sessions s WHERE s.id = session_id AND s.user_id = auth.uid())
+);
 
--- 6. Human Reviews RLS
+-- 7. Human Reviews RLS
 CREATE POLICY "Users view own reviews" 
   ON public.human_reviews FOR SELECT USING (
     auth.uid() = user_id OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
@@ -212,21 +249,21 @@ CREATE POLICY "Users view own reviews"
 CREATE POLICY "Users insert own reviews" 
   ON public.human_reviews FOR INSERT WITH CHECK (auth.uid() = user_id);
 
--- 7. Verification Results RLS
+-- 8. Verification Results RLS
 CREATE POLICY "Users view verification results" 
   ON public.verification_results FOR SELECT USING (
     EXISTS (
-      SELECT 1 FROM public.human_reviews r 
-      WHERE r.id = review_id AND (r.user_id = auth.uid() OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'))
+      SELECT 1 FROM public.troubleshooting_sessions s 
+      WHERE s.id = session_id AND (s.user_id = auth.uid() OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'))
     )
 );
 
 CREATE POLICY "Insert verification results" 
   ON public.verification_results FOR INSERT WITH CHECK (
-    EXISTS (SELECT 1 FROM public.human_reviews r WHERE r.id = review_id AND r.user_id = auth.uid())
+    EXISTS (SELECT 1 FROM public.troubleshooting_sessions s WHERE s.id = session_id AND s.user_id = auth.uid())
 );
 
--- 8. Dataset Corrections RLS
+-- 9. Dataset Corrections RLS
 CREATE POLICY "View dataset corrections" 
   ON public.dataset_corrections FOR SELECT USING (auth.role() = 'authenticated');
 
@@ -238,7 +275,7 @@ CREATE POLICY "Only admins update dataset corrections"
     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 );
 
--- 9. Audit Logs RLS
+-- 10. Audit Logs RLS
 CREATE POLICY "Admins view audit logs" 
   ON public.audit_logs FOR SELECT USING (
     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')

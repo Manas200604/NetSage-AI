@@ -10,250 +10,135 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
 
 class GeminiService:
-    @staticmethod
-    async def _call_gemini(prompt: str, json_mode: bool = True) -> str:
-        """Call Gemini API via httpx REST endpoint securely from backend."""
-        payload = {
-            "contents": [{
-                "parts": [{"text": prompt}]
-            }],
-            "generationConfig": {
-                "temperature": 0.2,
-                "topP": 0.95,
-                "maxOutputTokens": 2048
-            }
-        }
-        
-        if json_mode:
-            payload["generationConfig"]["responseMimeType"] = "application/json"
-            
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                response = await client.post(GEMINI_API_URL, json=payload)
-                response.raise_for_status()
-                data = response.json()
-                text_content = data["candidates"][0]["content"]["parts"][0]["text"]
-                return text_content
-            except Exception as e:
-                print(f"Gemini API call warning/error: {e}")
-                # Provide structured fallback if API fails or network issue occurs
-                return None
-
     @classmethod
-    async def normalize_problem(cls, problem_text: str, topology_note: str = "") -> Dict[str, Any]:
-        """Normalize user problem into structured JSON."""
-        prompt = f"""
-Act as a Cisco Networking Expert. Analyze and normalize the following networking problem.
-User Problem: {problem_text}
-Topology Notes: {topology_note}
-
-Return strictly valid JSON with this schema:
-{{
-  "problem_summary": "Concise 1-sentence summary",
-  "symptoms": ["List of observed symptoms"],
-  "possible_concepts": ["VLAN", "Gateway", "DHCP", "DNS", "Routing", "ACL", "NAT", "Wireless"],
-  "search_terms": ["Keyword 1", "Keyword 2", "Keyword 3"]
-}}
-"""
-        raw_res = await cls._call_gemini(prompt, json_mode=True)
-        if raw_res:
-            try:
-                return json.loads(raw_res)
-            except Exception:
-                pass
-                
-        # Deterministic fallback normalization if API unavailable
-        concepts = []
-        text_lower = problem_text.lower()
-        if "vlan" in text_lower or "trunk" in text_lower: concepts.append("VLAN")
-        if "ping" in text_lower or "gateway" in text_lower or "ip" in text_lower: concepts.append("Gateway")
-        if "route" in text_lower or "ospf" in text_lower or "rip" in text_lower: concepts.append("Routing")
-        if "dhcp" in text_lower or "lease" in text_lower: concepts.append("DHCP")
-        if "acl" in text_lower or "block" in text_lower: concepts.append("ACL")
-        if not concepts: concepts = ["Routing", "Gateway"]
-        
-        return {
-            "problem_summary": problem_text[:150],
-            "symptoms": [problem_text],
-            "possible_concepts": concepts,
-            "search_terms": problem_text.split()[:5]
-        }
-
-    @classmethod
-    async def generate_diagnosis(
+    async def generate_guided_diagnosis(
         cls,
         problem_text: str,
-        normalized_problem: Dict[str, Any],
-        show_output: str,
+        current_logs: str,
+        cleaned_facts: Dict[str, Any],
         rule_results: List[Dict[str, Any]],
-        relevant_cases: List[Dict[str, Any]],
-        topology_note: str = ""
+        retrieved_cases: List[Dict[str, Any]],
+        previous_iterations: List[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """Generate structured AI diagnosis incorporating evidence, rules, and retrieved dataset cases."""
+        """
+        Sends the complete iterative session context to Google Gemini AI and returns structured beginner guidance.
+        """
+        previous_iterations = previous_iterations or []
+
         prompt = f"""
-Act as a Senior Cisco Network Engineering Architect.
-Analyze the problem, Cisco show command output, deterministic rule checker results, and top retrieved dataset cases to generate a precise diagnosis.
+You are NetSage AI, an expert Cisco Networking & CCNA/CCNP Troubleshooting Assistant.
+You guide beginner networking students step-by-step to troubleshoot Packet Tracer lab problems.
 
-User Problem: {problem_text}
-Topology: {topology_note}
-Normalized Summary: {json.dumps(normalized_problem)}
+=== CURRENT TROUBLESHOOTING SESSION CONTEXT ===
+Original Problem Description:
+{problem_text}
 
-Cisco Show Command Output:
-{show_output}
+Latest Submitted Cisco CLI Output:
+{current_logs if current_logs.strip() else "[No CLI output submitted yet]"}
 
-Deterministic Rule Checker Results:
+Python Cleaned Facts Extracted:
+{json.dumps(cleaned_facts, indent=2)}
+
+Python Deterministic Rule Engine Results:
 {json.dumps(rule_results, indent=2)}
 
-Retrieved Relevant Dataset Cases:
-{json.dumps(relevant_cases, indent=2)}
+Relevant Knowledge Base Cases (from 255+ Dataset):
+{json.dumps(retrieved_cases, indent=2)}
 
-DIAGNOSIS RULES:
-1. Evidence First: Base root cause strictly on provided show output and rule check failures.
-2. No Hallucination: Do not invent non-existent commands or config details.
-3. Priority: If a deterministic rule check failed, weigh that result heavily.
-4. Confidence: High (if show output confirms root cause), Medium (if probable), Low (if missing evidence).
+Previous Session History (Past Iterations & User Actions):
+{json.dumps(previous_iterations, indent=2)}
 
-Return strictly valid JSON with this exact schema:
+=== GUIDANCE INSTRUCTIONS ===
+Analyze the combined evidence above.
+You MUST output ONLY a single valid JSON object with NO additional Markdown formatting or raw text outside JSON.
+Use this EXACT JSON structure:
+
 {{
-  "root_cause": "Detailed explanation of root cause",
-  "confidence": "High",
-  "osi_layer": "Layer 3",
-  "evidence": ["Exact line or finding from show output/rule check"],
-  "next_command": "Cisco CLI show command to verify fix",
-  "fix_steps": ["Step 1", "Step 2", "Step 3"],
-  "alternative_causes": ["Alternative possibility if main root cause is incorrect"],
-  "missing_evidence": ["Any additional show command or detail needed"]
+  "status": "NEED_MORE_DATA | LIKELY_CAUSE_FOUND | FIX_RECOMMENDED | READY_FOR_VERIFICATION | RESOLVED",
+  "root_cause": "Clear root cause statement or null if NEED_MORE_DATA",
+  "osi_layer": "Layer 1 | Layer 2 | Layer 3 | Layer 4 | Layer 7",
+  "confidence": "High | Medium | Low",
+  "evidence": [
+    "Specific evidence point 1 from CLI output or Python rule results",
+    "Specific evidence point 2"
+  ],
+  "what_i_found": "Beginner-friendly, step-by-step breakdown of what was discovered.",
+  "next_command": "Recommended Cisco CLI show command to run next (e.g., 'show interfaces trunk')",
+  "why_this_command": "Explanation of why this specific command is required.",
+  "expected_output": "What the student should look for in the CLI output.",
+  "fix_steps": [
+    "Exact Cisco IOS configuration command to execute in Packet Tracer (e.g. 'interface Gi0/0/0.20')",
+    "Next configuration command (e.g. 'encapsulation dot1Q 20')"
+  ],
+  "test_steps": [
+    "Verification test step in Packet Tracer (e.g. 'ping 192.168.20.1 from PC1')"
+  ],
+  "what_to_submit_next": "Explicit instruction on what command output to copy & paste into NetSage next."
 }}
 """
-        raw_res = await cls._call_gemini(prompt, json_mode=True)
-        if raw_res:
-            try:
-                res_json = json.loads(raw_res)
-                if "root_cause" in res_json:
-                    return res_json
-            except Exception:
-                pass
 
-        # Intelligent Fallback Diagnosis derived from Python Rule Failures or Top Case
-        failed_rules = [r for r in rule_results if r.get("status") == "FAIL"]
+        payload = {
+            "contents": [
+                {
+                    "parts": [{"text": prompt}]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.2,
+                "response_mime_type": "application/json"
+            }
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(GEMINI_API_URL, json=payload)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    res_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                    cleaned_json = res_text.strip()
+                    if cleaned_json.startswith("```"):
+                        cleaned_json = re.sub(r"^```json?\s*", "", cleaned_json)
+                        cleaned_json = re.sub(r"```$", "", cleaned_json).strip()
+                    return json.loads(cleaned_json)
+                else:
+                    return cls._fallback_guidance(problem_text, current_logs, rule_results, f"Gemini API returned status {response.status_code}")
+        except Exception as e:
+            return cls._fallback_guidance(problem_text, current_logs, rule_results, str(e))
+
+    @classmethod
+    def _fallback_guidance(cls, problem: str, logs: str, rules: List[Dict[str, Any]], err_msg: str) -> Dict[str, Any]:
+        """Deterministic fallback guidance if Gemini API is unreachable or rate limited."""
+        failed_rules = [r for r in rules if r.get("status") == "FAIL"]
+        
         if failed_rules:
             first_fail = failed_rules[0]
             return {
-                "root_cause": f"Configuration Failure: {first_fail.get('result')}",
+                "status": "FIX_RECOMMENDED",
+                "root_cause": first_fail["finding"],
+                "osi_layer": "Layer 3" if "IP" in first_fail["rule_name"] else "Layer 2",
                 "confidence": "High",
-                "osi_layer": "Layer 3" if "Route" in first_fail['rule'] or "Gateway" in first_fail['rule'] else "Layer 2",
-                "evidence": [first_fail.get("evidence")],
-                "next_command": "show ip interface brief" if "Interface" in first_fail['rule'] else "show ip route",
-                "fix_steps": [
-                    "Review configured IP addresses, subnet masks, and interface states.",
-                    "Execute recommended show command to verify physical and logical link status.",
-                    "Apply missing configuration commands under relevant interface or router process."
-                ],
-                "alternative_causes": ["Potential physical cable issue or upstream VLAN tagging mismatch."],
-                "missing_evidence": ["show running-config interface detail"]
+                "evidence": [first_fail["evidence"], f"Deterministic Rule: {first_fail['rule_name']}"],
+                "what_i_found": f"Python rule checker detected a deterministic issue: {first_fail['finding']}",
+                "next_command": "show ip interface brief",
+                "why_this_command": "To verify interface state and IP address assignment.",
+                "expected_output": "Status UP / UP and correct IP address assigned.",
+                "fix_steps": ["Verify physical cable connections and sub-interface configuration in Packet Tracer."],
+                "test_steps": ["Run ping test to default gateway."],
+                "what_to_submit_next": "Run 'show ip interface brief' in Packet Tracer and paste the new output here."
             }
-
-        top_case = relevant_cases[0] if relevant_cases else {}
+        
         return {
-            "root_cause": top_case.get("expected_fault", "Unspecified network connectivity issue"),
-            "confidence": "Medium",
-            "osi_layer": top_case.get("osi_layer", "Layer 3"),
-            "evidence": [top_case.get("symptom", "Symptom matches retrieved reference case")],
-            "next_command": top_case.get("next_command", "show ip route"),
-            "fix_steps": [top_case.get("recommended_fix", "Reconfigure interface and routing settings")],
-            "alternative_causes": ["Upstream ACL restriction"],
-            "missing_evidence": ["Complete show running-config"]
+            "status": "NEED_MORE_DATA",
+            "root_cause": None,
+            "osi_layer": "Layer 3",
+            "confidence": "Low",
+            "evidence": ["Initial evidence insufficient to diagnose root cause."],
+            "what_i_found": "Additional CLI command evidence is required to identify the root cause.",
+            "next_command": "show ip route",
+            "why_this_command": "Required to inspect the routing table for target network routes.",
+            "expected_output": "A valid route entry for the destination network.",
+            "fix_steps": [],
+            "test_steps": [],
+            "what_to_submit_next": "Execute 'show ip route' on your router and paste the output below."
         }
-
-    @classmethod
-    async def verify_human_feedback(
-        cls,
-        problem_text: str,
-        original_diagnosis: Dict[str, Any],
-        decision: str,
-        feedback: str,
-        show_output: str,
-        rule_results: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Perform AI verification on human EDIT or REJECT feedback."""
-        prompt = f"""
-Act as a Senior AI Verification Auditor.
-A human user reviewed an AI networking diagnosis and responded with decision: '{decision}' and feedback: '{feedback}'.
-
-Original Problem: {problem_text}
-Original AI Diagnosis: {json.dumps(original_diagnosis)}
-Cisco Show Output: {show_output}
-Rule Results: {json.dumps(rule_results)}
-
-Evaluate whether the human's feedback is supported by the evidence and establish the verified final diagnosis.
-
-Return strictly valid JSON with this schema:
-{{
-  "original_ai_correct": false,
-  "final_diagnosis": "Clear statement of verified final diagnosis combining human insight and evidence",
-  "evidence": ["Key evidence validating the final diagnosis"],
-  "verification_reason": "Detailed reasoning why the human correction was verified as accurate or adjusted",
-  "confidence": "High"
-}}
-"""
-        raw_res = await cls._call_gemini(prompt, json_mode=True)
-        if raw_res:
-            try:
-                return json.loads(raw_res)
-            except Exception:
-                pass
-
-        # Fallback Verification Response
-        return {
-            "original_ai_correct": False,
-            "final_diagnosis": f"Verified Diagnosis: {feedback}",
-            "evidence": ["Human expert feedback incorporated and verified against CLI evidence."],
-            "verification_reason": f"Human review provided crucial insight ({feedback}) supported by topology context.",
-            "confidence": "High"
-        }
-
-    @classmethod
-    async def detect_dataset_inconsistency(
-        cls,
-        retrieved_cases: List[Dict[str, Any]],
-        show_output: str,
-        actual_diagnosis: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Detect if a retrieved dataset case contains potentially wrong or outdated information."""
-        if not retrieved_cases:
-            return {"dataset_issue_detected": False}
-            
-        top_case = retrieved_cases[0]
-        prompt = f"""
-Act as a Knowledge Base Quality Control Auditor.
-Compare the following retrieved dataset case against the actual verified diagnosis and Cisco evidence.
-
-Retrieved Case ID: {top_case.get('case_id')}
-Retrieved Expected Fault: {top_case.get('expected_fault')}
-Retrieved OSI Layer: {top_case.get('osi_layer')}
-Actual Verified Diagnosis: {actual_diagnosis.get('root_cause')}
-Cisco Show Output Evidence: {show_output}
-
-Does the retrieved dataset case contain inaccurate or outdated information? If yes, generate a structured correction proposal.
-
-Return strictly valid JSON with this schema:
-{{
-  "dataset_issue_detected": true/false,
-  "case_id": "{top_case.get('case_id')}",
-  "field": "expected_fault",
-  "current_value": "{top_case.get('expected_fault')}",
-  "proposed_value": "Corrected fault description",
-  "reason": "Clear technical justification why dataset case is inconsistent",
-  "confidence": "High"
-}}
-"""
-        raw_res = await cls._call_gemini(prompt, json_mode=True)
-        if raw_res:
-            try:
-                res_json = json.loads(raw_res)
-                if "dataset_issue_detected" in res_json:
-                    return res_json
-            except Exception:
-                pass
-                
-        return {"dataset_issue_detected": False}
