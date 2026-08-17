@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { 
   Terminal, 
@@ -69,6 +70,21 @@ const PRESET_SCENARIOS = [
 
 export const TroubleshootWizardPage: React.FC = () => {
   const { user } = useAuth();
+  const location = useLocation();
+
+  // Prefill troubleshooting wizard state if redirecting from Python Checker
+  useEffect(() => {
+    if (location.state && location.state.problemText) {
+      const state = location.state;
+      setProblemText(state.problemText);
+      setDeviceName(state.deviceName);
+      const type = state.deviceName.startsWith('Router') ? 'Router' : state.deviceName.startsWith('Switch') ? 'Switch' : 'PC';
+      setDeviceType(type);
+      setCommandToRun(state.command);
+      setRawOutput(state.rawOutput || '');
+      setWizardState('NAV_TAB');
+    }
+  }, [location.state]);
 
   // Wizard Navigation States
   const [wizardState, setWizardState] = useState<'WELCOME' | 'DEVICE_SELECT' | 'NAV_TAB' | 'IDENTIFY_PROMPT' | 'GUIDE_MODE' | 'COMMAND_INPUT' | 'CHECKING' | 'DIAGNOSIS' | 'APPLY_FIX' | 'VERIFY' | 'RESOLVED' | 'ERROR_RECOVERY'>('WELCOME');
@@ -501,7 +517,7 @@ export const TroubleshootWizardPage: React.FC = () => {
                 onClick={() => handleIdentifyPrompt('C:\\>')}
                 className="p-4 rounded-xl bg-slate-950 border border-slate-850 hover:border-cyan-500 text-left font-mono text-xs text-cyan-300 transition-all"
               >
-                C:\&gt;
+                {"C:\\>"}
               </button>
             ) : (
               <>

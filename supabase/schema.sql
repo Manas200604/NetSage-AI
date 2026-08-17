@@ -304,3 +304,26 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+-- 11. PKT ANALYSES TABLE
+CREATE TABLE IF NOT EXISTS public.pkt_analyses (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    file_name TEXT NOT NULL,
+    file_reference TEXT,
+    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    extraction_status TEXT NOT NULL CHECK (extraction_status IN ('SUCCESS', 'PARTIAL', 'FAILED')),
+    network_data JSONB DEFAULT '{}'::jsonb,
+    rule_results JSONB DEFAULT '[]'::jsonb
+);
+
+ALTER TABLE public.pkt_analyses ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users view own pkt_analyses or admins view all"
+  ON public.pkt_analyses FOR SELECT USING (
+    auth.uid() = user_id OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+  );
+
+CREATE POLICY "Users insert own pkt_analyses"
+  ON public.pkt_analyses FOR INSERT WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+

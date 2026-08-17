@@ -14,6 +14,7 @@ import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { AdminDatasetPage } from './pages/AdminDatasetPage';
 import { AdminCorrectionsPage } from './pages/AdminCorrectionsPage';
 import { AdminResponsibleAIPage } from './pages/AdminResponsibleAIPage';
+import { PythonCheckerPage } from './pages/PythonCheckerPage';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; adminOnly?: boolean }> = ({ children, adminOnly }) => {
   const { user, profile, loading } = useAuth();
@@ -51,6 +52,7 @@ export const App: React.FC = () => {
 
               <Route path="/dashboard" element={<UserDashboardPage />} />
               <Route path="/troubleshoot" element={<TroubleshootWizardPage />} />
+              <Route path="/python-checker" element={<PythonCheckerPage />} />
               <Route path="/history" element={<SessionHistoryPage />} />
 
               {/* Admin Protected Routes */}

@@ -12,7 +12,8 @@ import {
   User, 
   FileEdit, 
   BrainCircuit,
-  Activity
+  Activity,
+  Cpu
 } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
@@ -59,6 +60,18 @@ export const Navbar: React.FC = () => {
           >
             <Terminal className="w-4 h-4 text-cyan-400" />
             Troubleshoot
+          </Link>
+
+          <Link
+            to="/python-checker"
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-medium transition-all ${
+              isActive('/python-checker')
+                ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-md shadow-cyan-500/20'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
+            }`}
+          >
+            <Cpu className="w-4 h-4 text-cyan-400" />
+            Python Checker
           </Link>
 
           {user && (

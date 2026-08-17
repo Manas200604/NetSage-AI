@@ -1,7 +1,7 @@
 import os
 import json
 from typing import Dict, Any, List, Optional
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import create_client, Client
@@ -11,6 +11,9 @@ from rule_engine import RuleChecker
 from retrieval_engine import CaseRetrievalEngine
 from gemini_service import GeminiService
 from log_cleaner import CiscoLogCleaner
+import sys
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from pkt_parser import PktParser
 
 load_dotenv()
 
@@ -310,6 +313,79 @@ async def approve_correction(req: CorrectionApprovalRequest):
         return {"status": status_str, "correction": correction}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/pkt/analyze")
+async def analyze_pkt(file: UploadFile = File(...), user_id: Optional[str] = None):
+    """
+    Parses an uploaded Cisco Packet Tracer .pkt file, converts it to structured Network JSON,
+    runs the Rule Checker on it, and stores the results in Supabase.
+    """
+    import tempfile
+    import shutil
+
+    if not file.filename.endswith('.pkt'):
+        raise HTTPException(status_code=400, detail="Only .pkt files are supported.")
+
+    # Save file temporarily
+    temp_dir = tempfile.gettempdir()
+    temp_path = os.path.join(temp_dir, file.filename)
+    
+    try:
+        with open(temp_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+
+        # Parse .pkt file
+        network_json = PktParser.parse_pkt_file(temp_path)
+        
+        if isinstance(network_json, dict) and network_json.get("available") is False:
+            return {
+                "status": "FAILED",
+                "message": network_json.get("reason", "We couldn't read enough information from this Packet Tracer project. Don't worry. You can still troubleshoot it using Packet Tracer CLI output.")
+            }
+
+        # Run Rule Checker against Network JSON
+        rule_results = rule_checker.run_network_json_checks(network_json)
+
+        # Save to Supabase (public.pkt_analyses table)
+        extraction_status = "SUCCESS" if len(rule_results) == 0 else "PARTIAL"
+        try:
+            supabase.table("pkt_analyses").insert({
+                "user_id": user_id if user_id else None,
+                "file_name": file.filename,
+                "file_reference": f"local_temp/{file.filename}",
+                "extraction_status": extraction_status,
+                "network_data": network_json,
+                "rule_results": rule_results
+            }).execute()
+        except Exception as db_err:
+            print("DB Save Warning:", db_err)
+
+        return {
+            "status": "SUCCESS",
+            "file_name": file.filename,
+            "network_data": network_json,
+            "rule_results": rule_results
+        }
+    except Exception as e:
+        return {
+            "status": "FAILED",
+            "message": f"We couldn't read enough information from this Packet Tracer project: {str(e)}. Don't worry. You can still troubleshoot it using Packet Tracer CLI output."
+        }
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+@app.get("/api/pkt/history")
+async def get_pkt_history(user_id: Optional[str] = None):
+    """Fetches user's Packet Tracer analysis history."""
+    try:
+        query = supabase.table("pkt_analyses").select("*")
+        if user_id:
+            query = query.eq("user_id", user_id)
+        res = query.order("uploaded_at", desc=True).execute()
+        return res.data or []
+    except Exception:
+        return []
 
 if __name__ == "__main__":
     import uvicorn
