@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- ROW LEVEL SECURITY (RLS) POLICIES
+-- ROW LEVEL SECURITY (RLS) POLICIES ENFORCEMENT
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cases ENABLE ROW LEVEL SECURITY;
@@ -139,54 +139,113 @@ ALTER TABLE public.verification_results ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.dataset_corrections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
--- Profiles: Public can read profiles, users can update their own
-CREATE POLICY "Public profiles are viewable by everyone" ON public.profiles FOR SELECT USING (true);
-CREATE POLICY "Users can insert their own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
-CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+-- 1. Profiles RLS
+CREATE POLICY "Public profiles are viewable by authenticated users" 
+  ON public.profiles FOR SELECT USING (auth.role() = 'authenticated');
 
--- Cases: Everyone can read cases, only admins or service role can insert/update/delete
-CREATE POLICY "Cases are viewable by authenticated users" ON public.cases FOR SELECT USING (true);
-CREATE POLICY "Admins can insert cases" ON public.cases FOR INSERT WITH CHECK (
-    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
-);
-CREATE POLICY "Admins can update cases" ON public.cases FOR UPDATE USING (
-    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
-);
-CREATE POLICY "Admins can delete cases" ON public.cases FOR DELETE USING (
+CREATE POLICY "Users can insert their own profile" 
+  ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
+
+CREATE POLICY "Users can update own profile" 
+  ON public.profiles FOR UPDATE USING (auth.uid() = id);
+
+-- 2. Cases RLS
+CREATE POLICY "Cases viewable by authenticated users" 
+  ON public.cases FOR SELECT USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Admins insert cases" 
+  ON public.cases FOR INSERT WITH CHECK (
     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 );
 
--- Troubleshooting Sessions: Users can view and create their own sessions, admins can view all
-CREATE POLICY "Users view own sessions" ON public.troubleshooting_sessions FOR SELECT USING (
+CREATE POLICY "Admins update cases" 
+  ON public.cases FOR UPDATE USING (
+    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);
+
+CREATE POLICY "Admins delete cases" 
+  ON public.cases FOR DELETE USING (
+    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);
+
+-- 3. Troubleshooting Sessions RLS (Strict User Isolation)
+CREATE POLICY "Users view own sessions or admins view all" 
+  ON public.troubleshooting_sessions FOR SELECT USING (
     auth.uid() = user_id OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 );
-CREATE POLICY "Users insert own sessions" ON public.troubleshooting_sessions FOR INSERT WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users update own sessions" ON public.troubleshooting_sessions FOR UPDATE USING (auth.uid() = user_id);
 
--- Rule Checker Results: Viewable if session belongs to user or admin
-CREATE POLICY "Users view session rule results" ON public.rule_checker_results FOR SELECT USING (true);
-CREATE POLICY "Insert rule results" ON public.rule_checker_results FOR INSERT WITH CHECK (true);
+CREATE POLICY "Users insert own sessions" 
+  ON public.troubleshooting_sessions FOR INSERT WITH CHECK (auth.uid() = user_id);
 
--- Diagnoses: Viewable by session owner or admin
-CREATE POLICY "View diagnoses" ON public.diagnoses FOR SELECT USING (true);
-CREATE POLICY "Insert diagnoses" ON public.diagnoses FOR INSERT WITH CHECK (true);
+CREATE POLICY "Users update own sessions" 
+  ON public.troubleshooting_sessions FOR UPDATE USING (auth.uid() = user_id);
 
--- Human Reviews: Viewable by user or admin
-CREATE POLICY "View human reviews" ON public.human_reviews FOR SELECT USING (true);
-CREATE POLICY "Insert human reviews" ON public.human_reviews FOR INSERT WITH CHECK (auth.uid() = user_id);
+-- 4. Rule Checker Results RLS
+CREATE POLICY "Users view own session rule results" 
+  ON public.rule_checker_results FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.troubleshooting_sessions s 
+      WHERE s.id = session_id AND (s.user_id = auth.uid() OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'))
+    )
+);
 
--- Verification Results: Viewable by user or admin
-CREATE POLICY "View verification results" ON public.verification_results FOR SELECT USING (true);
-CREATE POLICY "Insert verification results" ON public.verification_results FOR INSERT WITH CHECK (true);
+CREATE POLICY "Insert rule results" 
+  ON public.rule_checker_results FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM public.troubleshooting_sessions s WHERE s.id = session_id AND s.user_id = auth.uid())
+);
 
--- Dataset Corrections: Viewable by all, editable by admins
-CREATE POLICY "View dataset corrections" ON public.dataset_corrections FOR SELECT USING (true);
-CREATE POLICY "Insert dataset corrections" ON public.dataset_corrections FOR INSERT WITH CHECK (true);
-CREATE POLICY "Update dataset corrections" ON public.dataset_corrections FOR UPDATE USING (true);
+-- 5. Diagnoses RLS
+CREATE POLICY "Users view own session diagnoses" 
+  ON public.diagnoses FOR SELECT USING (
+    auth.uid() = user_id OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);
 
--- Audit Logs: Viewable by admins, insertable by service/authenticated
-CREATE POLICY "View audit logs" ON public.audit_logs FOR SELECT USING (true);
-CREATE POLICY "Insert audit logs" ON public.audit_logs FOR INSERT WITH CHECK (true);
+CREATE POLICY "Users insert own diagnoses" 
+  ON public.diagnoses FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- 6. Human Reviews RLS
+CREATE POLICY "Users view own reviews" 
+  ON public.human_reviews FOR SELECT USING (
+    auth.uid() = user_id OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);
+
+CREATE POLICY "Users insert own reviews" 
+  ON public.human_reviews FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- 7. Verification Results RLS
+CREATE POLICY "Users view verification results" 
+  ON public.verification_results FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.human_reviews r 
+      WHERE r.id = review_id AND (r.user_id = auth.uid() OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'))
+    )
+);
+
+CREATE POLICY "Insert verification results" 
+  ON public.verification_results FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM public.human_reviews r WHERE r.id = review_id AND r.user_id = auth.uid())
+);
+
+-- 8. Dataset Corrections RLS
+CREATE POLICY "View dataset corrections" 
+  ON public.dataset_corrections FOR SELECT USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users insert corrections" 
+  ON public.dataset_corrections FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+CREATE POLICY "Only admins update dataset corrections" 
+  ON public.dataset_corrections FOR UPDATE USING (
+    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);
+
+-- 9. Audit Logs RLS
+CREATE POLICY "Admins view audit logs" 
+  ON public.audit_logs FOR SELECT USING (
+    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);
+
+CREATE POLICY "Insert audit logs" 
+  ON public.audit_logs FOR INSERT WITH CHECK (auth.role() = 'authenticated');
 
 -- TRIGGER FOR AUTH USER CREATION AUTOMATIC PROFILE ENTRY
 CREATE OR REPLACE FUNCTION public.handle_new_user()

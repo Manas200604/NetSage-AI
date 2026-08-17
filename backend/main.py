@@ -156,6 +156,17 @@ async def verify_feedback(req: VerifyFeedbackRequest):
 @app.post("/api/admin/approve-correction")
 async def approve_correction(req: CorrectionApprovalRequest):
     """Admin approves or rejects a dataset correction proposal. If approved, updates cases table in Supabase."""
+    if not req.admin_id:
+        raise HTTPException(status_code=401, detail="Authentication admin_id is required.")
+        
+    # Server-side verification of administrator role
+    prof_res = supabase.table("profiles").select("role").eq("id", req.admin_id).execute()
+    if not prof_res.data or prof_res.data[0].get("role") != "admin":
+        raise HTTPException(
+            status_code=403, 
+            detail="Unauthorized: User does not have administrator privileges required to approve or modify dataset cases."
+        )
+
     try:
         corr_res = supabase.table("dataset_corrections").select("*").eq("id", req.correction_id).execute()
         if not corr_res.data:
