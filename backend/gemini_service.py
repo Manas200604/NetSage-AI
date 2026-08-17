@@ -57,7 +57,8 @@ Previous Session History:
 === RESPONSE RULES ===
 1. Analyze the evidence above.
 2. If evidence is incomplete or insufficient, DO NOT guess or hallucinate. Set "status": "NEED_MORE_DATA" and specify "next_evidence_required" (e.g. "show ip route").
-3. You MUST output ONLY a single valid JSON object with NO markdown or outside text.
+3. DO NOT invent or guess interface names (e.g. GigabitEthernet0/1 or FastEthernet0/0). You MUST inspect the exact interface name present in the Python Rule Engine Findings (e.g. GigabitEthernet0/0/0) and use that exact interface name in your config 'commands' and 'recommended_fix' fields.
+4. You MUST output ONLY a single valid JSON object with NO markdown or outside text.
 
 JSON Schema:
 {{

@@ -42,3 +42,10 @@ def test_check_missing_route():
     show_output = "R1# show ip route\nGateway of last resort is not set\nC 192.168.1.0/24 is directly connected"
     res = RuleChecker.check_missing_route(show_output)
     assert res["status"] == "FAIL"
+
+def test_check_interface_down_triple_zero():
+    show_output = "R1# show ip interface brief\nGigabitEthernet0/0/0  unassigned YES NVRAM administratively down down"
+    res = RuleChecker.check_interface_down(show_output)
+    assert res["status"] == "FAIL"
+    assert res["interface"] == "GigabitEthernet0/0/0"
+

@@ -240,32 +240,53 @@ class RuleChecker:
         }
 
     @staticmethod
+    def determine_target_interface(text: str, default_val: str = "GigabitEthernet0/0/0") -> str:
+        """Parses the actual interface list from show ip interface brief logs or text sentences."""
+        # 1. Try regex sentence scanner first
+        matches = re.findall(r"\b(GigabitEthernet|FastEthernet|Ethernet|Serial|Vlan|Gi|Fa|Se)\s*([0-9/\.\-]+)\b", text, re.IGNORECASE)
+        if matches:
+            return f"{matches[0][0]}{matches[0][1]}"
+
+        # 2. Fallback to structured facts
+        facts = CiscoLogCleaner.extract_structured_facts(text)
+        down_ifaces = [i for i in facts.get("interfaces", []) if "down" in i.get("status", "").lower() or "down" in i.get("protocol", "").lower()]
+        if down_ifaces:
+            return down_ifaces[0]["name"]
+        
+        if facts.get("interfaces"):
+            return facts["interfaces"][0]["name"]
+        
+        return default_val
+
+    @staticmethod
     def check_interface_down(text: str, problem: str = "", device: str = "Router0") -> Dict[str, Any]:
         combined = f"{problem} {text}"
+        target_iface = RuleChecker.determine_target_interface(text, "GigabitEthernet0/0/0")
+        
         if "administratively down" in combined.lower():
-            finding_text = f"{device} interface is administratively down (Gi0/0/1)."
+            finding_text = f"{device} interface is administratively down ({target_iface})."
             return {
                 "rule_name": "Interface Status Check",
                 "status": "FAIL",
                 "type": "ADMINISTRATIVELY_DOWN",
                 "device": device,
-                "interface": "GigabitEthernet0/1",
+                "interface": target_iface,
                 "finding": finding_text,
                 "result": finding_text,
-                "evidence": "CLI output contains 'administratively down'.",
+                "evidence": f"CLI output contains 'administratively down' for {target_iface}.",
                 "severity": "SEV-2"
             }
         if "down/down" in combined.lower() or "down" in combined.lower():
-            finding_text = f"{device} physical/line protocol interface is DOWN (Gi0/0/1)."
+            finding_text = f"{device} physical/line protocol interface is DOWN ({target_iface})."
             return {
                 "rule_name": "Interface Status Check",
                 "status": "FAIL",
                 "type": "INTERFACE_DOWN",
                 "device": device,
-                "interface": "GigabitEthernet0/1",
+                "interface": target_iface,
                 "finding": finding_text,
                 "result": finding_text,
-                "evidence": "CLI output contains down/down interface state.",
+                "evidence": f"CLI output contains down/down interface state for {target_iface}.",
                 "severity": "SEV-1"
             }
         finding_text = "All evaluated interfaces are UP / UP."
@@ -274,7 +295,7 @@ class RuleChecker:
             "status": "PASS",
             "type": "INTERFACE_DOWN",
             "device": device,
-            "interface": "GigabitEthernet0/0",
+            "interface": target_iface,
             "finding": finding_text,
             "result": finding_text,
             "evidence": "Operational status is up, line protocol is up.",
