@@ -497,7 +497,14 @@ class RuleChecker:
             parts = command.strip().split()
             if len(parts) >= 2:
                 if_name = parts[1]
-                if verified_interfaces is not None and len(verified_interfaces) > 0:
+                if not verified_interfaces:
+                    return {
+                        "valid": False,
+                        "reason": f"Interface {if_name} has not been verified/discovered yet on this device. We must run show ip interface brief first to identify available ports.",
+                        "suggested_command": "show ip interface brief",
+                        "expected_prompt": prompt_clean.split("(")[0] + "#"
+                    }
+                else:
                     matched = any(if_name.lower() in v.lower() or v.lower() in if_name.lower() for v in verified_interfaces)
                     if not matched:
                         return {

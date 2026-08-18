@@ -72,6 +72,6 @@ class PktParser:
 
         except Exception as e:
             return {
-                "available": false,
+                "available": False,
                 "reason": f"Information could not be extracted: {str(e)}"
             }

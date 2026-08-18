@@ -49,3 +49,19 @@ def test_check_interface_down_triple_zero():
     assert res["status"] == "FAIL"
     assert res["interface"] == "GigabitEthernet0/0/0"
 
+def test_validate_proposed_command():
+    # 1. Reject if verified_interfaces is empty
+    res1 = RuleChecker.validate_proposed_command("Router0", "interface GigabitEthernet0/1", "Router(config)#", [])
+    assert res1["valid"] is False
+    assert "has not been verified" in res1["reason"]
+
+    # 2. Reject if interface is mismatch
+    res2 = RuleChecker.validate_proposed_command("Router0", "interface GigabitEthernet0/1", "Router(config)#", ["GigabitEthernet0/0/1"])
+    assert res2["valid"] is False
+    assert "does not exist" in res2["reason"]
+
+    # 3. Allow if interface is matched
+    res3 = RuleChecker.validate_proposed_command("Router0", "interface GigabitEthernet0/0/1", "Router(config)#", ["GigabitEthernet0/0/1"])
+    assert res3["valid"] is True
+
+

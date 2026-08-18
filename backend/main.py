@@ -203,9 +203,10 @@ async def submit_iteration(req: SubmitIterationRequest):
         except Exception:
             pass
 
-        # 7.1 Parse all previous logs for verified interfaces list
+        # 7.1 Parse all previous logs & current logs & PKT configuration files for verified interfaces
         verified_interfaces = []
         try:
+            # 1. Interfaces from previous logs
             prev_logs = supabase.table("troubleshooting_logs").select("structured_facts").eq("session_id", req.session_id).execute()
             if prev_logs.data:
                 for log in prev_logs.data:
@@ -216,6 +217,25 @@ async def submit_iteration(req: SubmitIterationRequest):
                                 verified_interfaces.append(iface["name"])
         except Exception:
             pass
+
+        # 2. Interfaces from current output
+        if cleaned_facts and "interfaces" in cleaned_facts and isinstance(cleaned_facts["interfaces"], list):
+            for iface in cleaned_facts["interfaces"]:
+                if "name" in iface:
+                    verified_interfaces.append(iface["name"])
+
+        # 3. Interfaces from PKT Checker upload (if session is linked)
+        try:
+            pkt_res = supabase.table("pkt_analyses").select("network_json").eq("session_id", req.session_id).execute()
+            if pkt_res.data:
+                net_json = pkt_res.data[0].get("network_json") or {}
+                # Extract interfaces from network_json
+                for iface in net_json.get("interfaces", []):
+                    if "interface" in iface:
+                        verified_interfaces.append(iface["interface"])
+        except Exception:
+            pass
+
         verified_interfaces = list(set(verified_interfaces))
 
         # 7.2 Check raw output for Cisco console errors
