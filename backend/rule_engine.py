@@ -260,35 +260,96 @@ class RuleChecker:
 
     @staticmethod
     def check_interface_down(text: str, problem: str = "", device: str = "Router0") -> Dict[str, Any]:
+        facts = CiscoLogCleaner.extract_structured_facts(text)
+        interfaces = facts.get("interfaces", [])
+        
+        # Look for configured/main ports that are actually down
+        failing_iface = None
+        is_admin_down = False
+        
+        for iface in interfaces:
+            name = iface.get("name", "")
+            status = iface.get("status", "").lower()
+            protocol = iface.get("protocol", "").lower()
+            ip = iface.get("ip", "").lower()
+            
+            is_down = "down" in status or "down" in protocol
+            if is_down:
+                # Flag as failure only if:
+                # - Port has an IP address (is assigned)
+                # - OR it's a main port (0/0/0 or 0/0/1 or 0/0 or 0/1) AND is administratively down (disabled)
+                # - OR it's GigabitEthernet0/0/0 or GigabitEthernet0/0/1 and is down/down (link down)
+                is_main = name.lower() in ["gigabitethernet0/0/0", "gigabitethernet0/0/1", "gigabitethernet0/0", "gigabitethernet0/1"]
+                is_assigned = ip != "unassigned" and ip != ""
+                
+                if is_assigned or is_main:
+                    failing_iface = name
+                    is_admin_down = "administratively down" in status
+                    break
+        
+        # If we found a failing interface, return failure
+        if failing_iface:
+            if is_admin_down:
+                finding_text = f"{device} interface is administratively down ({failing_iface})."
+                return {
+                    "rule_name": "Interface Status Check",
+                    "status": "FAIL",
+                    "type": "ADMINISTRATIVELY_DOWN",
+                    "device": device,
+                    "interface": failing_iface,
+                    "finding": finding_text,
+                    "result": finding_text,
+                    "evidence": f"CLI output contains 'administratively down' for {failing_iface}.",
+                    "severity": "SEV-2"
+                }
+            else:
+                finding_text = f"{device} physical/line protocol interface is DOWN ({failing_iface})."
+                return {
+                    "rule_name": "Interface Status Check",
+                    "status": "FAIL",
+                    "type": "INTERFACE_DOWN",
+                    "device": device,
+                    "interface": failing_iface,
+                    "finding": finding_text,
+                    "result": finding_text,
+                    "evidence": f"CLI output contains down/down interface state for {failing_iface}.",
+                    "severity": "SEV-1"
+                }
+                
+        # If no failing interfaces are found, check if there's text saying administratively down in the problem text
+        # (This preserves backward compatibility with older text-only presets!)
         combined = f"{problem} {text}"
         target_iface = RuleChecker.determine_target_interface(text, "GigabitEthernet0/0/0")
         
-        if "administratively down" in combined.lower():
-            finding_text = f"{device} interface is administratively down ({target_iface})."
-            return {
-                "rule_name": "Interface Status Check",
-                "status": "FAIL",
-                "type": "ADMINISTRATIVELY_DOWN",
-                "device": device,
-                "interface": target_iface,
-                "finding": finding_text,
-                "result": finding_text,
-                "evidence": f"CLI output contains 'administratively down' for {target_iface}.",
-                "severity": "SEV-2"
-            }
-        if "down/down" in combined.lower() or "down" in combined.lower():
-            finding_text = f"{device} physical/line protocol interface is DOWN ({target_iface})."
-            return {
-                "rule_name": "Interface Status Check",
-                "status": "FAIL",
-                "type": "INTERFACE_DOWN",
-                "device": device,
-                "interface": target_iface,
-                "finding": finding_text,
-                "result": finding_text,
-                "evidence": f"CLI output contains down/down interface state for {target_iface}.",
-                "severity": "SEV-1"
-            }
+        # Only fallback if we didn't parse any interfaces successfully from structured logs!
+        if not interfaces:
+            if "administratively down" in combined.lower():
+                finding_text = f"{device} interface is administratively down ({target_iface})."
+                return {
+                    "rule_name": "Interface Status Check",
+                    "status": "FAIL",
+                    "type": "ADMINISTRATIVELY_DOWN",
+                    "device": device,
+                    "interface": target_iface,
+                    "finding": finding_text,
+                    "result": finding_text,
+                    "evidence": f"CLI output contains 'administratively down' for {target_iface}.",
+                    "severity": "SEV-2"
+                }
+            if "down/down" in combined.lower() or "down" in combined.lower():
+                finding_text = f"{device} physical/line protocol interface is DOWN ({target_iface})."
+                return {
+                    "rule_name": "Interface Status Check",
+                    "status": "FAIL",
+                    "type": "INTERFACE_DOWN",
+                    "device": device,
+                    "interface": target_iface,
+                    "finding": finding_text,
+                    "result": finding_text,
+                    "evidence": f"CLI output contains down/down interface state for {target_iface}.",
+                    "severity": "SEV-1"
+                }
+
         finding_text = "All evaluated interfaces are UP / UP."
         return {
             "rule_name": "Interface Status Check",

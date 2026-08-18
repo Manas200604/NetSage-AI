@@ -64,4 +64,16 @@ def test_validate_proposed_command():
     res3 = RuleChecker.validate_proposed_command("Router0", "interface GigabitEthernet0/0/1", "Router(config)#", ["GigabitEthernet0/0/1"])
     assert res3["valid"] is True
 
+def test_check_interface_down_pass_with_unused_down_ports():
+    show_output = (
+        "Router0# show ip interface brief\n"
+        "GigabitEthernet0/0/0   unassigned      YES unset  up                    up \n"
+        "GigabitEthernet0/0/1   unassigned      YES unset  up                    up \n"
+        "GigabitEthernet0/0/2   unassigned      YES unset  down                  down \n"
+        "GigabitEthernet0/0/3   unassigned      YES unset  down                  down"
+    )
+    res = RuleChecker.check_interface_down(show_output)
+    assert res["status"] == "PASS"
+
+
 
