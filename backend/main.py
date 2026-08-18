@@ -44,6 +44,11 @@ class StartSessionRequest(BaseModel):
     user_id: Optional[str] = None
     problem_text: str
 
+class AnalyzeImageRequest(BaseModel):
+    session_id: str
+    image_base64: str
+    problem_text: str
+
 class SubmitIterationRequest(BaseModel):
     session_id: str
     user_id: Optional[str] = None
@@ -96,6 +101,29 @@ async def start_session(req: StartSessionRequest):
                 "status": "in_progress"
             }
         }
+        
+@app.post("/api/troubleshoot/analyze-image")
+async def analyze_image(req: AnalyzeImageRequest):
+    """
+    Sends base64 topology image to Gemini to extract devices, connections, and command paths.
+    """
+    try:
+        understanding = await GeminiService.analyze_topology_image(req.problem_text, req.image_base64)
+        
+        # Save topology context into Supabase troubleshooting_sessions table
+        try:
+            supabase.table("troubleshooting_sessions").update({
+                "normalized_problem": {
+                    "image_base64": req.image_base64,
+                    "topology_understanding": understanding
+                }
+            }).eq("id", req.session_id).execute()
+        except Exception as e:
+            print(f"Supabase session update warning: {e}")
+            
+        return understanding
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/troubleshoot/submit-iteration")
 async def submit_iteration(req: SubmitIterationRequest):
@@ -175,17 +203,83 @@ async def submit_iteration(req: SubmitIterationRequest):
         except Exception:
             pass
 
-        # 8. Call Gemini AI Guidance Engine
-        ai_guidance = await GeminiService.generate_guided_diagnosis(
-            problem_text=problem_text,
-            current_logs=req.raw_output,
-            cleaned_facts=cleaned_facts,
-            rule_results=rule_results,
-            retrieved_cases=retrieved_cases,
-            previous_iterations=previous_history,
-            device=req.device,
-            command=req.command
-        )
+        # 7.1 Parse all previous logs for verified interfaces list
+        verified_interfaces = []
+        try:
+            prev_logs = supabase.table("troubleshooting_logs").select("structured_facts").eq("session_id", req.session_id).execute()
+            if prev_logs.data:
+                for log in prev_logs.data:
+                    facts = log.get("structured_facts") or {}
+                    if "interfaces" in facts and isinstance(facts["interfaces"], list):
+                        for iface in facts["interfaces"]:
+                            if "name" in iface:
+                                verified_interfaces.append(iface["name"])
+        except Exception:
+            pass
+        verified_interfaces = list(set(verified_interfaces))
+
+        # 7.2 Check raw output for Cisco console errors
+        error_keywords = [
+            "% Invalid input detected",
+            "% Invalid command",
+            "% Invalid interface type and number",
+            "% Incomplete command",
+            "% Ambiguous command",
+            "% Unknown command"
+        ]
+        detected_error = None
+        for kw in error_keywords:
+            if kw.lower() in req.raw_output.lower():
+                detected_error = kw
+                break
+
+        if detected_error:
+            if "interface type" in detected_error.lower():
+                explanation = "The interface name I asked you to use does not exist on this router. Let's find your router's actual interfaces."
+                commands = ["show ip interface brief"]
+                next_evidence = "show ip interface brief"
+                expected_output = "List of physical interfaces configured on the router."
+            elif "invalid input" in detected_error.lower():
+                explanation = "You're currently in configuration mode, but the verification command was run here. Let's return to the main router mode first."
+                commands = ["end"]
+                next_evidence = "end"
+                expected_output = "Router# privileged exec mode prompt."
+            else:
+                explanation = "Something didn't match what we expected. That's okay — don't type anything else yet."
+                commands = ["end"]
+                next_evidence = "show ip interface brief"
+                expected_output = "Show interface list and reset prompt state."
+
+            ai_guidance = {
+                "status": "ERROR_DETECTED",
+                "root_cause": f"Cisco CLI Warning: {detected_error}",
+                "osi_layer": "Layer 3",
+                "confidence": "High",
+                "evidence": [f"Console Error: {detected_error}"],
+                "explanation": explanation,
+                "recommended_fix": "Follow the CLI recovery step to realign the terminal prompt.",
+                "commands": commands,
+                "expected_output": expected_output,
+                "verification_steps": [
+                    f"1. Run the recovery command in Packet Tracer.",
+                    f"2. Copy and paste new prompt output below."
+                ],
+                "next_evidence_required": next_evidence,
+                "alternative_causes": ["Cisco CLI mode desynchronization."]
+            }
+        else:
+            # 8. Call Gemini AI Guidance Engine
+            ai_guidance = await GeminiService.generate_guided_diagnosis(
+                problem_text=problem_text,
+                current_logs=req.raw_output,
+                cleaned_facts=cleaned_facts,
+                rule_results=rule_results,
+                retrieved_cases=retrieved_cases,
+                previous_iterations=previous_history,
+                device=req.device,
+                command=req.command,
+                verified_interfaces=verified_interfaces
+            )
 
         # 9. Save AI Response to Supabase
         ai_response_id = "test-ai-id"

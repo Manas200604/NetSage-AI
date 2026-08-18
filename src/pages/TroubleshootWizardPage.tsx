@@ -19,7 +19,8 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
-  ChevronRight
+  ChevronRight,
+  Upload
 } from 'lucide-react';
 
 interface IterationState {
@@ -87,8 +88,14 @@ export const TroubleshootWizardPage: React.FC = () => {
   }, [location.state]);
 
   // Wizard Navigation States
-  const [wizardState, setWizardState] = useState<'WELCOME' | 'DEVICE_SELECT' | 'NAV_TAB' | 'IDENTIFY_PROMPT' | 'GUIDE_MODE' | 'COMMAND_INPUT' | 'CHECKING' | 'DIAGNOSIS' | 'APPLY_FIX' | 'VERIFY' | 'RESOLVED' | 'ERROR_RECOVERY'>('WELCOME');
+  const [wizardState, setWizardState] = useState<'WELCOME' | 'UPLOAD_IMAGE' | 'DEVICE_SELECT' | 'NAV_TAB' | 'IDENTIFY_PROMPT' | 'GUIDE_MODE' | 'COMMAND_INPUT' | 'CHECKING' | 'DIAGNOSIS' | 'APPLY_FIX' | 'VERIFY' | 'RESOLVED' | 'ERROR_RECOVERY'>('WELCOME');
   
+  // Image-First Context
+  const [topologyImageBase64, setTopologyImageBase64] = useState<string | null>(null);
+  const [topologyUnderstanding, setTopologyUnderstanding] = useState<any>(null);
+  const [suggestedCommands, setSuggestedCommands] = useState<any[]>([]);
+  const [currentCommandIdx, setCurrentCommandIdx] = useState(0);
+
   // Troubleshooting Context
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [problemText, setProblemText] = useState('');
@@ -150,18 +157,41 @@ export const TroubleshootWizardPage: React.FC = () => {
       });
       const data = await res.json();
       setSessionId(data.session_id);
-      
-      const discovered = getDiscoveredDevices(problemText);
-      if (discovered.length === 1) {
-        const dname = discovered[0];
-        const type = dname.toLowerCase().startsWith('router') ? 'Router' : dname.toLowerCase().startsWith('switch') ? 'Switch' : 'PC';
-        handleSelectDevice(type, dname);
-      } else {
-        setWizardState('DEVICE_SELECT');
-      }
+      setWizardState('UPLOAD_IMAGE');
     } catch (err) {
       console.error(err);
-      setWizardState('DEVICE_SELECT');
+      setSessionId('sess-' + Date.now());
+      setWizardState('UPLOAD_IMAGE');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUploadImage = async (file: File) => {
+    setLoading(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64Data = reader.result as string;
+        setTopologyImageBase64(base64Data);
+
+        const res = await fetch('http://localhost:8000/api/troubleshoot/analyze-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: sessionId || 'mock-session-id',
+            image_base64: base64Data,
+            problem_text: problemText
+          })
+        });
+        const data = await res.json();
+        setTopologyUnderstanding(data);
+        setSuggestedCommands(data.suggested_commands || []);
+        setCurrentCommandIdx(0);
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error("Error uploading image:", err);
     } finally {
       setLoading(false);
     }
@@ -252,9 +282,16 @@ export const TroubleshootWizardPage: React.FC = () => {
         ai_guidance: aiResponse
       };
       setIterationsHistory((prev) => [...prev, newIter]);
+      setRawOutput('');
 
       setTimeout(() => {
-        setWizardState('DIAGNOSIS');
+        if (aiResponse?.status === 'RESOLVED') {
+          setWizardState('RESOLVED');
+        } else if (aiResponse?.status === 'ERROR_DETECTED') {
+          setWizardState('ERROR_RECOVERY');
+        } else {
+          setWizardState('DIAGNOSIS');
+        }
         setLoading(false);
       }, 1500);
 
@@ -361,7 +398,11 @@ export const TroubleshootWizardPage: React.FC = () => {
         setReviewFeedback('');
         
         setTimeout(() => {
-          setWizardState('DIAGNOSIS');
+          if (aiResponse?.status === 'ERROR_DETECTED') {
+            setWizardState('ERROR_RECOVERY');
+          } else {
+            setWizardState('DIAGNOSIS');
+          }
           setLoading(false);
         }, 1500);
       }
@@ -451,6 +492,96 @@ export const TroubleshootWizardPage: React.FC = () => {
               Start Troubleshooting <ArrowRight className="w-4 h-4" />
             </button>
           </form>
+        </div>
+      )}
+
+      {/* STATE: UPLOAD TOPOLOGY IMAGE */}
+      {wizardState === 'UPLOAD_IMAGE' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
+          <div className="text-center space-y-2">
+            <h2 className="text-xl font-bold text-white">Let's understand your network first.</h2>
+            <p className="text-sm text-slate-400">Upload a screenshot of your Cisco Packet Tracer topology diagram.</p>
+          </div>
+
+          {!topologyImageBase64 ? (
+            <div className="border-2 border-dashed border-slate-800 rounded-2xl p-8 hover:border-cyan-500/50 transition-colors flex flex-col items-center justify-center gap-3 bg-slate-950/40 text-center">
+              <Upload className="w-10 h-10 text-slate-500" />
+              <div className="space-y-1">
+                <span className="text-xs text-slate-400 font-bold block">Drag & drop or browse image</span>
+                <span className="text-[10px] text-slate-600 block">Supports PNG, JPG, JPEG</span>
+              </div>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    handleUploadImage(e.target.files[0]);
+                  }
+                }}
+                className="hidden"
+                id="file-upload-topology"
+              />
+              <label
+                htmlFor="file-upload-topology"
+                className="mt-2 px-4 py-2 bg-slate-900 border border-slate-800 hover:bg-slate-800 hover:text-white cursor-pointer rounded-lg text-xs font-bold text-slate-300 transition-all"
+              >
+                Choose Screenshot File
+              </label>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 border border-emerald-950/50 bg-emerald-950/20 px-3.5 py-2.5 rounded-xl">
+                <span>✓ Screenshot uploaded successfully</span>
+              </div>
+              
+              {loading ? (
+                <div className="flex flex-col items-center justify-center p-6 space-y-3">
+                  <div className="w-6 h-6 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+                  <span className="text-xs font-mono text-cyan-400 animate-pulse">Analyzing network topology screenshot...</span>
+                </div>
+              ) : topologyUnderstanding ? (
+                <div className="space-y-4">
+                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-850 space-y-3 text-xs font-mono text-slate-400">
+                    <div className="text-slate-200 font-bold">Topology Overview:</div>
+                    <div>
+                      <strong>Discovered Devices:</strong>{' '}
+                      {topologyUnderstanding.devices?.map((d: any) => d.name).join(', ') || 'None'}
+                    </div>
+                    <div>
+                      <strong>Suggested CLI Command Checklist:</strong>
+                      <div className="space-y-1.5 mt-2">
+                        {suggestedCommands.map((c: any, index: number) => (
+                          <div key={index} className="flex items-center gap-1.5 text-slate-300">
+                            <span className="text-cyan-400">→</span>
+                            <span>On <strong className="text-white">{c.device}</strong> run <code className="text-cyan-400 bg-slate-900 px-1 py-0.5 rounded">{c.command}</code>: {c.reason}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (suggestedCommands.length > 0) {
+                        const firstCmd = suggestedCommands[0];
+                        const type = firstCmd.device.toLowerCase().startsWith('router') ? 'Router' : firstCmd.device.toLowerCase().startsWith('switch') ? 'Switch' : 'PC';
+                        setDeviceType(type);
+                        setDeviceName(firstCmd.device);
+                        setCommandToRun(firstCmd.command);
+                        setWizardState('NAV_TAB');
+                      } else {
+                        setWizardState('DEVICE_SELECT');
+                      }
+                    }}
+                    className="w-full py-3 rounded-xl font-bold bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    Proceed to Check <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
       )}
 
@@ -899,41 +1030,73 @@ export const TroubleshootWizardPage: React.FC = () => {
       {/* STATE 12: ERROR RECOVERY / REALIGNMENT */}
       {wizardState === 'ERROR_RECOVERY' && (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
-          <div className="text-center space-y-2">
-            <h2 className="text-xl font-bold text-white">Something Went Wrong?</h2>
-            <p className="text-sm text-slate-400">Let's reset and realign your current CLI mode.</p>
+          <div className="space-y-2 text-center">
+            <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 mx-auto">
+              <XCircle className="w-6 h-6" />
+            </div>
+            <h2 className="text-xl font-bold text-white">Something didn't match what we expected.</h2>
+            <p className="text-xs text-slate-400">That's okay — don't type anything else yet.</p>
           </div>
 
-          <div className="space-y-4">
-            <p className="text-xs text-slate-400 font-mono">Select the prompt mode you see right now in Packet Tracer:</p>
-            <div className="grid grid-cols-2 gap-3">
+          <div className="bg-slate-950 p-5 rounded-xl border border-slate-850 space-y-4">
+            <div className="text-xs text-rose-450 font-bold uppercase tracking-wider font-mono">
+              Error Diagnosis:
+            </div>
+            <p className="text-sm text-slate-300 font-sans leading-relaxed">
+              {currentAiResponse?.explanation || "We detected a Cisco console command input syntax mismatch or prompt synchronization warning."}
+            </p>
+
+            {currentAiResponse?.commands && currentAiResponse.commands.length > 0 && (
+              <div className="space-y-3 font-mono text-xs">
+                <div>
+                  <span className="text-slate-500">Run this recovery command:</span>
+                  <div className="bg-slate-900 px-3.5 py-2.5 rounded-lg text-sm text-cyan-300 border border-slate-800 font-bold select-all mt-1">
+                    {currentAiResponse.commands[0]}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-slate-500">Expected Output:</span>
+                  <div className="text-slate-350 mt-0.5">
+                    {currentAiResponse.expected_output}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            <textarea
+              rows={4}
+              value={rawOutput}
+              onChange={(e) => setRawOutput(e.target.value)}
+              placeholder="Paste CLI console output after running recovery command..."
+              className="w-full bg-slate-950 border border-slate-850 rounded-xl p-4 text-xs text-cyan-300 font-mono focus:outline-none"
+            />
+
+            <div className="flex gap-3">
               <button
                 type="button"
-                onClick={() => handleIdentifyPrompt('Router>')}
-                className="p-3 rounded-lg bg-slate-950 border border-slate-800 hover:border-cyan-500 text-left font-mono text-xs text-slate-300"
+                onClick={handleCheckLogs}
+                disabled={loading || !rawOutput.trim()}
+                className="flex-1 py-3 rounded-xl font-bold bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg transition-all"
               >
-                Router&gt;
+                Submit Output
               </button>
+              
               <button
                 type="button"
-                onClick={() => handleIdentifyPrompt('Router#')}
-                className="p-3 rounded-lg bg-slate-950 border border-slate-800 hover:border-cyan-500 text-left font-mono text-xs text-slate-300"
+                onClick={() => {
+                  setProblemText('');
+                  setRawOutput('');
+                  setSessionId(null);
+                  setCurrentIteration(1);
+                  setIterationsHistory([]);
+                  setCurrentAiResponse(null);
+                  setWizardState('WELCOME');
+                }}
+                className="px-5 py-3 rounded-xl font-bold bg-slate-950 border border-slate-850 hover:bg-slate-900 text-slate-400 transition-all text-xs"
               >
-                Router#
-              </button>
-              <button
-                type="button"
-                onClick={() => handleIdentifyPrompt('Router(config)#')}
-                className="p-3 rounded-lg bg-slate-950 border border-slate-800 hover:border-cyan-500 text-left font-mono text-xs text-slate-300"
-              >
-                Router(config)#
-              </button>
-              <button
-                type="button"
-                onClick={() => handleRealignPrompt('Router>')}
-                className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/20 text-xs font-bold"
-              >
-                Reset Session State
+                Reset Session
               </button>
             </div>
           </div>
