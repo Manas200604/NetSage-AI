@@ -264,6 +264,7 @@ JSON Schema:
         
         if failed_rules:
             first_fail = failed_rules[0]
+            target_if = first_fail.get("interface", "GigabitEthernet0/0/0")
             return {
                 "status": "FIX_RECOMMENDED",
                 "root_cause": first_fail["finding"],
@@ -272,7 +273,7 @@ JSON Schema:
                 "evidence": [first_fail["evidence"], f"Python Check: {first_fail['rule_name']} ({first_fail['severity']})"],
                 "explanation": f"Python rule checker detected a deterministic configuration issue on {device}: {first_fail['finding']}",
                 "recommended_fix": f"Configure {device} in Packet Tracer to correct the {first_fail['rule_name']}.",
-                "commands": ["interface GigabitEthernet0/1", "no shutdown"],
+                "commands": [f"interface {target_if}", "no shutdown"],
                 "expected_output": "Interface status should change to UP / UP.",
                 "verification_steps": [
                   "1. Enter global configuration mode in Packet Tracer.",

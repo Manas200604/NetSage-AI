@@ -68,8 +68,8 @@ class RuleChecker:
                     "status": "FAIL",
                     "type": "ADMINISTRATIVELY_DOWN",
                     "device": item.get("device", "Router0"),
-                    "interface": item.get("interface", "GigabitEthernet0/1"),
-                    "finding": f"Interface is Disabled: {item.get('device')}'s {item.get('interface')} interface is currently disabled.",
+                    "interface": item.get("interface", "GigabitEthernet0/0/0"),
+                    "finding": f"Interface is Disabled: {item.get('device')}'s {item.get('interface', 'GigabitEthernet0/0/0')} interface is currently disabled.",
                     "result": f"{item.get('device')} interface is administratively down.",
                     "evidence": f"Operational state is set to administratively down.",
                     "severity": "SEV-2"
@@ -80,8 +80,8 @@ class RuleChecker:
                     "status": "FAIL",
                     "type": "INTERFACE_DOWN",
                     "device": item.get("device", "Router0"),
-                    "interface": item.get("interface", "GigabitEthernet0/1"),
-                    "finding": f"Interface is Down: {item.get('device')}'s {item.get('interface')} connection line protocol is currently down.",
+                    "interface": item.get("interface", "GigabitEthernet0/0/0"),
+                    "finding": f"Interface is Down: {item.get('device')}'s {item.get('interface', 'GigabitEthernet0/0/0')} connection line protocol is currently down.",
                     "result": f"{item.get('device')} physical line protocol state is DOWN.",
                     "evidence": "Operational line protocol state is down.",
                     "severity": "SEV-1"
