@@ -119,6 +119,23 @@ export const TroubleshootWizardPage: React.FC = () => {
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Discovers device names dynamically from problem descriptions
+  const getDiscoveredDevices = (text: string): string[] => {
+    const matches = text.match(/\b(PC\d+|Router\d+|Switch\d+|Server\d+|pc\d+|router\d+|switch\d+|server\d+)\b/g);
+    if (matches) {
+      const mapped = matches.map(m => {
+        const clean = m.trim();
+        if (clean.toLowerCase().startsWith('pc')) return 'PC' + clean.slice(2);
+        if (clean.toLowerCase().startsWith('router')) return 'Router' + clean.slice(6);
+        if (clean.toLowerCase().startsWith('switch')) return 'Switch' + clean.slice(6);
+        if (clean.toLowerCase().startsWith('server')) return 'Server' + clean.slice(6);
+        return clean;
+      });
+      return Array.from(new Set(mapped));
+    }
+    return [];
+  };
+
   // 1. Initialize Troubleshooting Session
   const handleStartSession = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -133,7 +150,15 @@ export const TroubleshootWizardPage: React.FC = () => {
       });
       const data = await res.json();
       setSessionId(data.session_id);
-      setWizardState('DEVICE_SELECT');
+      
+      const discovered = getDiscoveredDevices(problemText);
+      if (discovered.length === 1) {
+        const dname = discovered[0];
+        const type = dname.toLowerCase().startsWith('router') ? 'Router' : dname.toLowerCase().startsWith('switch') ? 'Switch' : 'PC';
+        handleSelectDevice(type, dname);
+      } else {
+        setWizardState('DEVICE_SELECT');
+      }
     } catch (err) {
       console.error(err);
       setWizardState('DEVICE_SELECT');
@@ -430,64 +455,73 @@ export const TroubleshootWizardPage: React.FC = () => {
       )}
 
       {/* STATE 2: DEVICE SELECTION CARD */}
-      {wizardState === 'DEVICE_SELECT' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
-          <div className="text-center space-y-2">
-            <h2 className="text-xl font-bold text-white">Which device are we inspecting?</h2>
-            <p className="text-xs text-slate-400">We need to determine the target hardware to guide you with the correct console instructions.</p>
+      {wizardState === 'DEVICE_SELECT' && (() => {
+        const discovered = getDiscoveredDevices(problemText);
+        const availableDevices = discovered.length > 0 ? discovered : ['PC0', 'Router0', 'PC1'];
+        
+        return (
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
+            <div className="text-center space-y-2">
+              <h2 className="text-xl font-bold text-white">Which device are we inspecting?</h2>
+              <p className="text-xs text-slate-400">Select the device you are troubleshooting from your network setup.</p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {availableDevices.map((dname) => {
+                const type = dname.toLowerCase().startsWith('router') ? 'Router' : dname.toLowerCase().startsWith('switch') ? 'Switch' : 'PC';
+                return (
+                  <button
+                    key={dname}
+                    type="button"
+                    onClick={() => handleSelectDevice(type, dname)}
+                    className="p-5 rounded-xl bg-slate-950 border border-slate-850 hover:border-cyan-500 hover:bg-slate-900 transition-all flex flex-col items-center justify-center gap-3"
+                  >
+                    {type === 'PC' ? (
+                      <Server className="w-5 h-5 text-cyan-400" />
+                    ) : type === 'Router' ? (
+                      <Layers className="w-5 h-5 text-blue-400" />
+                    ) : (
+                      <Cpu className="w-5 h-5 text-indigo-400" />
+                    )}
+                    <span className="text-sm font-bold text-slate-200">{dname}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <button
-              type="button"
-              onClick={() => handleSelectDevice('PC', 'PC1')}
-              className="p-5 rounded-xl bg-slate-950 border border-slate-850 hover:border-cyan-500 hover:bg-slate-900 transition-all flex flex-col items-center justify-center gap-3"
-            >
-              <Server className="w-5 h-5 text-cyan-400" />
-              <span className="text-xs font-bold text-slate-200">Host / PC</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSelectDevice('Router', 'Router0')}
-              className="p-5 rounded-xl bg-slate-950 border border-slate-850 hover:border-cyan-500 hover:bg-slate-900 transition-all flex flex-col items-center justify-center gap-3"
-            >
-              <Layers className="w-5 h-5 text-blue-400" />
-              <span className="text-xs font-bold text-slate-200">Router</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSelectDevice('Switch', 'Switch0')}
-              className="p-5 rounded-xl bg-slate-950 border border-slate-850 hover:border-cyan-500 hover:bg-slate-900 transition-all flex flex-col items-center justify-center gap-3"
-            >
-              <Cpu className="w-5 h-5 text-indigo-400" />
-              <span className="text-xs font-bold text-slate-200">Switch</span>
-            </button>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* STATE 3: NAVIGATION TAB INSTRUCTIONS */}
       {wizardState === 'NAV_TAB' && (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
-          <div className="space-y-1">
-            <div className="text-xs font-mono uppercase tracking-widest text-cyan-400 font-bold">Step 1 — Open the Device Console</div>
-            <h2 className="text-xl font-bold text-white">Find **{deviceName}** in Packet Tracer</h2>
-          </div>
+          {deviceType === 'PC' ? (
+            <div className="space-y-1">
+              <div className="text-xs font-mono uppercase tracking-widest text-cyan-400 font-bold">STEP 1 — OPEN YOUR DEVICE</div>
+              <h2 className="text-xl font-bold text-white">Find <span className="text-cyan-400 font-mono">{deviceName}</span> in your Packet Tracer workspace.</h2>
+            </div>
+          ) : (
+            <div className="space-y-1">
+              <div className="text-xs font-mono uppercase tracking-widest text-cyan-400 font-bold">STEP 1 — OPEN YOUR {deviceType.toUpperCase()}</div>
+              <h2 className="text-xl font-bold text-white">Find <span className="text-cyan-400 font-mono">{deviceName}</span> in your Packet Tracer workspace.</h2>
+            </div>
+          )}
 
-          <div className="bg-slate-950 p-5 rounded-xl border border-slate-850 space-y-3 text-sm text-slate-300">
+          <div className="bg-slate-950 p-5 rounded-xl border border-slate-850 space-y-3 text-sm text-slate-300 font-sans">
             {deviceType === 'PC' ? (
               <>
-                <p>1. Click on **{deviceName}** inside your Packet Tracer workspace.</p>
-                <p>2. Select the **Desktop** tab at the top.</p>
-                <p>3. Click on **Command Prompt**.</p>
+                <p>1. Look at the network diagram in Cisco Packet Tracer.</p>
+                <p>2. Find the device named **{deviceName}**.</p>
+                <p>3. Click on it.</p>
+                <p>4. Open the **Desktop** tab at the top.</p>
+                <p>5. Click on **Command Prompt**.</p>
               </>
             ) : (
               <>
-                <p>1. Click on **{deviceName}** inside your Packet Tracer workspace.</p>
-                <p>2. Select the **CLI** tab at the top.</p>
-                <p>3. Press **Enter** to active the console prompt.</p>
+                <p>1. Look at the network diagram in Cisco Packet Tracer.</p>
+                <p>2. Click **{deviceName}**.</p>
+                <p>3. Open the **CLI** tab at the top.</p>
+                <p>4. Press **Enter** to active the console prompt.</p>
               </>
             )}
           </div>
